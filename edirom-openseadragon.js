@@ -9,7 +9,7 @@ class EdiromOpenseadragon extends HTMLElement {
     }
 
     static get observedAttributes() {
-        return ['preserveViewport', 'visibilityRatio', 'minZoomLevel', 'maxZoomLevel', 'showNavigationControl', 'sequenceMode', 'tileSources'];
+        return ['preserveviewport', 'visibilityratio', 'minzoomlevel', 'maxzoomlevel', 'shownavigationcontrol', 'sequencemode', 'tilesources'];
     }
 
     attributeChangedCallback(property, oldValue, newValue) {
@@ -47,6 +47,7 @@ class EdiromOpenseadragon extends HTMLElement {
         this.shadowRoot.appendChild(this.viewerDiv);
         // Callback when the element is added to the document's DOM
         osdScript.onload = () => this.displayOpenSeadragon();
+
     }
 
     displayOpenSeadragon() {
