@@ -9,18 +9,16 @@ class EdiromOpenseadragon extends HTMLElement {
     }
 
     static get observedAttributes() {
-        return ['preserveViewport', 'visibilityRatio', 'minZoomLevel', 'maxZoomLevel', 'showNavigationControl', 'sequenceMode', 'tileSources'];
+        return ['preserveviewport', 'visibilityration', 'minzoomlevel', 'maxzoomlevel', 'shownavigationcontrol', 'sequencemode', 'tilesources'];
     }
 
     attributeChangedCallback(property, oldValue, newValue) {
-        console.log("hi");
 
         // handle property change
         this.set(property, newValue);
     }
 
     set(property, newPropertyValue) {
-        console.log("hi2");
         // set internal and html properties  
         this[property] = newPropertyValue;
         // custom event for property update
@@ -50,27 +48,20 @@ class EdiromOpenseadragon extends HTMLElement {
     }
 
     displayOpenSeadragon() {
-      
+        console.log("this is attribute called hi " ,  this.maxzoomlevel)
         console.log("OpenSeadragon script loaded");
         if (window.OpenSeadragon) {
             OpenSeadragon({
                 element: this.shadowRoot.getElementById('viewer'),
-                preserveViewport: this.preserveViewport === 'true',
-                visibilityRatio: 1,
-                minZoomLevel: 1,
-                defaultZoomLevel: 1,
-                maxZoomLevel: 1,
-                showNavigationControl: 'true',
-                sequenceMode: 'true',
-                tileSources: [
-                    "https://libimages1.princeton.edu/loris/pudl0001%2F4609321%2Fs42%2F00000001.jp2/info.json",
-                    "https://libimages1.princeton.edu/loris/pudl0001%2F4609321%2Fs42%2F00000002.jp2/info.json",
-                    "https://libimages1.princeton.edu/loris/pudl0001%2F4609321%2Fs42%2F00000003.jp2/info.json",
-                    "https://libimages1.princeton.edu/loris/pudl0001%2F4609321%2Fs42%2F00000004.jp2/info.json",
-                    "https://libimages1.princeton.edu/loris/pudl0001%2F4609321%2Fs42%2F00000005.jp2/info.json",
-                    "https://libimages1.princeton.edu/loris/pudl0001%2F4609321%2Fs42%2F00000006.jp2/info.json",
-                    "https://libimages1.princeton.edu/loris/pudl0001%2F4609321%2Fs42%2F00000007.jp2/info.json"
-                ]
+                preserveViewport: this.preserveviewport,
+                visibilityRatio: this.visibilityratio,
+                minZoomLevel: this.minzoomlevel,
+                defaultZoomLevel: this.defaultzoomLevel,
+                maxZoomLevel: this.maxzoomlevel,
+                showNavigationControl: this.shownavigationcontrol,
+                sequenceMode: this.sequencemode,
+                tileSources: JSON.parse(this.tilesources)
+
             });
         } else {
             console.error('OpenSeadragon library is not loaded.');
