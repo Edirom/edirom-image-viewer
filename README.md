@@ -10,6 +10,7 @@ Note: This repository only contains the bare JavaScript-based component, there i
 ## License
 
 The edirom-openseadragon.js comes with the license MIT. 
+
 The imported Openseadragon library comes with the license BSD-3-Clause license.
 
 
@@ -21,8 +22,9 @@ The imported Openseadragon library comes with the license BSD-3-Clause license.
 <script src="path/to/edirom-openseadragon.js"></script>
 ```
 3. Include a custom element (this is specified and can be processed by the component) into the `<body>` of the HTML page. The attributes of the custom element are used as parameters at initialization of the component and changing them (manually or programmatically) can control the components state and behaviour during runtime. The state changes of the web component are communicated outwards via custom events (called 'communicate-{change-type}-update'). The component/document that instantiates the web component (its parent) can listen (via event listeners which have to be implemented individually) and react to the communicated state changes if necessary. The separation of inward communication (via custom element's attributes) and outward communication (via custom events) is esp. necessary to handle frequently populated information like currentTime of the audio player and avoid interference between reading and writing info about the component's state.
-'''html
-<edirom-openseadragon preserveviewport='' visibilityratio='' minzoomLevel='' maxzoomLevel='' shownavigationcontrol='' sequencemode='' tileSources=''></edirom-openseadragon>'''
+```html
+<edirom-openseadragon preserveviewport='' visibilityratio='' minzoomLevel='' maxzoomLevel='' shownavigationcontrol='' sequencemode='' tileSources=''></edirom-openseadragon>
+```
 
 ### Parameters
 
@@ -37,7 +39,7 @@ The Openseadrgon parameters mentioned below are based on the available [Opensead
 | maxzoomLevel           | integer    | The maximum zoom level for the rendered SVG.                                                                                                             | "10"     |
 | shownavigationcontrol  | string     | Controls the visibility of the navigation controls.                                                                                                      | "true"   |
 | sequencemode           | string     | Sets the mode for sequence navigation (e.g., 'continuous', 'discrete').                                                                                  | "false"  |
-| tileSources            | string     | URL or array of URLs for the source tiles used in rendering the SVG. e.g., `tileSources='["https://libimages1.princeton.edu/loris/pudl0001%2F4609321%2Fs42%2F00000001.jp2/info.json", "https://libimages1.princeton.edu/loris/pudl0001%2F4609321%2Fs42%2F00000002.jp2/info.json"...]'` | ""       |
+| tilesources            | string     | URL or array of URLs for the source tiles used in rendering the SVG. e.g., `tilesources='["https://libimages1.princeton.edu/loris/pudl0001%2F4609321%2Fs42%2F00000001.jp2/info.json", "https://libimages1.princeton.edu/loris/pudl0001%2F4609321%2Fs42%2F00000002.jp2/info.json"...]'` | ""       |
 
 
 
