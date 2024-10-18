@@ -18,7 +18,7 @@ class EdiromOpenseadragon extends HTMLElement {
         this.set(property, newValue);
 
         if(property === 'tilesources') {
-            this.setTileSources(newValue);
+            this.displayOpenSeadragon();
         }
     }
 
@@ -55,6 +55,11 @@ class EdiromOpenseadragon extends HTMLElement {
         console.log("this is attribute called hi " ,  this.maxzoomlevel)
         console.log("OpenSeadragon script loaded");
         if (window.OpenSeadragon) {
+
+            if(this.openSeaDragon) {
+                this.openSeaDragon.destroy();
+            }
+
             this.openSeaDragon = OpenSeadragon({
                 element: this.shadowRoot.getElementById('viewer'),
                 preserveViewport: this.preserveviewport,
@@ -69,12 +74,6 @@ class EdiromOpenseadragon extends HTMLElement {
             });
         } else {
             console.error('OpenSeadragon library is not loaded.');
-        }
-    }
-    
-    setTileSources(tileSources) {
-        if (this.openSeaDragon) {
-            this.openSeaDragon.open(tileSources);
         }
     }
 }
