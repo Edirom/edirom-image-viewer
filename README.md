@@ -1,6 +1,6 @@
 ![GitHub License](https://img.shields.io/github/license/Edirom/edirom-image-viewer)
 
-# Edirom Openseadragon Component
+# Edirom Image Viewer Component
 
 This web component displays IIIF tile sources using openseadragon library. It is intended to be used in tbe Edirom Online, but can also be (re-)used in other web applications. No compilation or building is necessary to use the web component. 
 The component uses (https://openseadragon.github.io) library. 
