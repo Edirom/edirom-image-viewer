@@ -17,20 +17,22 @@ class EdiromOpenseadragon extends HTMLElement {
         // handle property change
         this.set(property, newValue);
 
-        if(property === 'tilesources') {
-            this.displayOpenSeadragon();
-        }
     }
 
     set(property, newPropertyValue) {
+        
         // set internal and html properties  
         this[property] = newPropertyValue;
+        
         // custom event for property update
         const event = new CustomEvent('communicate-' + property + '-update', {
             detail: { [property]: newPropertyValue },
             bubbles: true
         });
         this.dispatchEvent(event);
+
+        // further handling of property change
+        this.handlePropertyChange(property, newPropertyValue);
     }
 
     connectedCallback() {
@@ -47,13 +49,37 @@ class EdiromOpenseadragon extends HTMLElement {
         this.viewerDiv.style.width = '100%';
         this.viewerDiv.style.height = '100%';
         this.shadowRoot.appendChild(this.viewerDiv);
-        // Callback when the element is added to the document's DOM
-        osdScript.onload = () => this.displayOpenSeadragon();
+        
+        
+        // Callback when the script is loaded
+        osdScript.onload = () => {
+            if (window.OpenSeadragon) {
+                console.log('OpenSeadragon library is loaded.');
+                this.displayOpenSeadragon();
+            }
+            
+        };
     }
 
+
+    handlePropertyChange(property, newPropertyValue) {
+        switch(property) {
+      
+            // handle tileSources property change
+            case 'tilesources':
+                this.displayOpenSeadragon();
+                break;
+      
+            // handle default
+            default:  
+              console.log("Invalid property: '"+property+"'");
+      
+        }
+    
+    }
+
+
     displayOpenSeadragon() {
-        console.log("this is attribute called hi " ,  this.maxzoomlevel)
-        console.log("OpenSeadragon script loaded");
         if (window.OpenSeadragon) {
 
             if(this.openSeaDragon) {
