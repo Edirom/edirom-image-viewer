@@ -55,7 +55,7 @@ class EdiromOpenseadragon extends HTMLElement {
         osdScript.onload = () => {
             if (window.OpenSeadragon) {
                 console.log('OpenSeadragon library is loaded.');
-                this.displayOpenSeadragon();
+                this.set('tilesources', this.getAttribute('tilesources'));
             }
             
         };
