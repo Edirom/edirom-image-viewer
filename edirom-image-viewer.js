@@ -9,7 +9,7 @@ class EdiromOpenseadragon extends HTMLElement {
     }
 
     static get observedAttributes() {
-        return ['preserveviewport', 'visibilityration', 'minzoomlevel', 'maxzoomlevel', 'shownavigationcontrol', 'sequencemode', 'tilesources'];
+        return ['preserveviewport', 'clicktozoom', 'visibilityratio', 'minzoomlevel', 'maxzoomlevel', 'shownavigationcontrol',  'sequencemode', 'shownavigator', 'showzoomcontrol', 'showhomecontrol', 'showfullpagecontrol', 'showsequencecontrol', 'tilesources'];
     }
 
     attributeChangedCallback(property, oldValue, newValue) {
@@ -54,7 +54,6 @@ class EdiromOpenseadragon extends HTMLElement {
         // Callback when the script is loaded
         osdScript.onload = () => {
             if (window.OpenSeadragon) {
-                console.log('OpenSeadragon library is loaded.');
                 this.set('tilesources', this.getAttribute('tilesources'));
             }
             
@@ -69,7 +68,11 @@ class EdiromOpenseadragon extends HTMLElement {
             case 'tilesources':
                 this.displayOpenSeadragon();
                 break;
-      
+            case 'showfullpagecontrol':                
+                this.openSeaDragon.showFullPageControl =  newPropertyValue === 'true';
+                break;
+    
+                
             // handle default
             default:  
               console.log("Invalid property: '"+property+"'");
@@ -77,7 +80,6 @@ class EdiromOpenseadragon extends HTMLElement {
         }
     
     }
-
 
     displayOpenSeadragon() {
         if (window.OpenSeadragon) {
@@ -93,10 +95,16 @@ class EdiromOpenseadragon extends HTMLElement {
                 minZoomLevel: this.minzoomlevel,
                 defaultZoomLevel: this.defaultzoomLevel,
                 maxZoomLevel: this.maxzoomlevel,
-                showNavigationControl: this.shownavigationcontrol,
-                sequenceMode: this.sequencemode,
-                tileSources: JSON.parse(this.tilesources)
-
+                showNavigationControl: this.shownavigationcontrol === 'true',
+                tileSources: JSON.parse(this.tilesources),
+                showNavigator:  this.shownavigator === 'true',
+                showZoomControl:  this.showzoomcontrol === 'true',
+                showHomeControl:  this.showhomecontrol === 'true',
+                showFullPageControl:  this.showfullpagecontrol === 'true',
+                showSequenceControl:  this.showsequencecontrol === 'true',
+                gestureSettingsMouse: {
+                  clickToZoom: this.clicktozoom === 'true',
+                }
             });
         } else {
             console.error('OpenSeadragon library is not loaded.');
