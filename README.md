@@ -93,6 +93,10 @@ _Note: All attribute values are strings. The data type information indicates the
 | `triggerhome`            | string  | Trigger attribute to reset view to home position (set any value to trigger).                                                                             | `""`     |
 | `triggerfullscreen`      | string  | Trigger attribute to toggle fullscreen mode (set any value to trigger).                                                                                  | `""`     |
 | `openseadragon-options`  | string  | JSON object with additional OpenSeadragon configuration options. Example: `'{"gestureSettingsTouch": {"pinchRotate": true}}'`                          | `""`     |
+| `ulx`                    | number  | Upper-left x coordinate (pixels) of a rectangle to zoom to. If unset, defaults to the image width.                                                      | image width |
+| `uly`                    | number  | Upper-left y coordinate (pixels) of a rectangle to zoom to. If unset, defaults to the image height.                                                     | image height |
+| `lrx`                    | number  | Lower-right x coordinate (pixels) of a rectangle to zoom to. If unset, defaults to the image width.                                                     | image width |
+| `lry`                    | number  | Lower-right y coordinate (pixels) of a rectangle to zoom to. If unset, defaults to the image height.                                                    | image height |
 
 ## Public Methods
 

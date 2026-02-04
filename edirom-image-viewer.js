@@ -30,6 +30,10 @@
  * @attribute {string} triggerhome - Trigger attribute to reset view to home position.
  * @attribute {string} triggerfullscreen - Trigger attribute to toggle fullscreen mode.
  * @attribute {object|string} openseadragon-options - Additional OpenSeadragon configuration options as JSON object.
+ * @attribute {number} ulx - Upper-left x coordinate (pixels) of a rectangle to zoom to; defaults to image width if unset.
+ * @attribute {number} uly - Upper-left y coordinate (pixels) of a rectangle to zoom to; defaults to image height if unset.
+ * @attribute {number} lrx - Lower-right x coordinate (pixels) of a rectangle to zoom to; defaults to image width if unset.
+ * @attribute {number} lry - Lower-right y coordinate (pixels) of a rectangle to zoom to; defaults to image height if unset.
  * 
  * @fires communicate-[property]-update - Fired when a property is updated via attribute change.
  * 
@@ -74,7 +78,7 @@ class EdiromOpenseadragon extends HTMLElement {
      * @returns {Array<string>} The list of observed attributes.
      */
     static get observedAttributes() {
-        return ['preserveviewport', 'clicktozoom', 'visibilityratio', 'minzoomlevel', 'maxzoomlevel', 'shownavigationcontrol',  'sequencemode', 'shownavigator', 'showzoomcontrol', 'showhomecontrol', 'showfullpagecontrol', 'showsequencecontrol', 'tilesources', 'pagenumber', 'zoom', 'rotation', 'triggerhome', 'triggerfullscreen', 'openseadragon-options'];
+        return ['preserveviewport', 'clicktozoom', 'visibilityratio', 'minzoomlevel', 'maxzoomlevel', 'shownavigationcontrol',  'sequencemode', 'shownavigator', 'showzoomcontrol', 'showhomecontrol', 'showfullpagecontrol', 'showsequencecontrol', 'tilesources', 'pagenumber', 'zoom', 'rotation', 'triggerhome', 'triggerfullscreen', 'openseadragon-options', 'ulx', 'uly', 'lrx', 'lry'];
     }
 
     /**
@@ -178,6 +182,15 @@ class EdiromOpenseadragon extends HTMLElement {
                 this.options = JSON.parse(newPropertyValue);
                 if(this.openSeaDragon) {
                     this.displayOpenSeadragon();
+                }
+                break;
+
+            case 'ulx':
+            case 'uly':
+            case 'lrx':
+            case 'lry':
+                if(this.openSeaDragon) {
+                    this.applyRegionZoom();
                 }
                 break;
 
@@ -295,11 +308,74 @@ class EdiromOpenseadragon extends HTMLElement {
 
         // Apply initial page selection once the viewer is ready
         this.openSeaDragon.addOnceHandler('open', () => {
-            const initialPage = parseInt(this.pagenumber);
+            const initialPage = parseInt(this.getAttribute('pagenumber') ?? this.pagenumber);
             if (!isNaN(initialPage)) {
                 this.goToPage(initialPage);
             }
+            this.applyRegionZoom();
         });
+
+        // Reapply region zoom on page changes
+        this.openSeaDragon.addHandler('page', () => {
+            this.applyRegionZoom();
+        });
+
+        // Ensure region zoom applies once tiles are available on first load
+        this.openSeaDragon.addOnceHandler('tile-loaded', () => {
+            this.applyRegionZoom();
+        });
+    }
+
+    /**
+     * Applies a zoom to the rectangle defined by ulx, uly, lrx, lry (image pixel coordinates).
+     * Missing values default to the maximum extent of the corresponding axis.
+     */
+    applyRegionZoom() {
+        if(!this.openSeaDragon || !this.openSeaDragon.world || !this.openSeaDragon.world.getItemCount()) {
+            return;
+        }
+
+        // Only act if at least one coordinate attribute is present
+        const hasAnyCoord = this.hasAttribute('ulx') || this.hasAttribute('uly') || this.hasAttribute('lrx') || this.hasAttribute('lry');
+        if(!hasAnyCoord) {
+            return;
+        }
+
+        const currentItem = this.openSeaDragon.world.getItemAt(this.openSeaDragon.currentPage ? this.openSeaDragon.currentPage() : 0) || this.openSeaDragon.world.getItemAt(0);
+        if(!currentItem) {
+            return;
+        }
+
+        const contentSize = currentItem.getContentSize();
+        const imgWidth = contentSize.x;
+        const imgHeight = contentSize.y;
+
+        const ulxAttr = this.getAttribute('ulx');
+        const ulyAttr = this.getAttribute('uly');
+        const lrxAttr = this.getAttribute('lrx');
+        const lryAttr = this.getAttribute('lry');
+
+        const ulx = ulxAttr !== null ? parseFloat(ulxAttr) : imgWidth;
+        const uly = ulyAttr !== null ? parseFloat(ulyAttr) : imgHeight;
+        const lrx = lrxAttr !== null ? parseFloat(lrxAttr) : imgWidth;
+        const lry = lryAttr !== null ? parseFloat(lryAttr) : imgHeight;
+
+        const cleanUlx = Math.min(Math.max(isNaN(ulx) ? imgWidth : ulx, 0), imgWidth);
+        const cleanUly = Math.min(Math.max(isNaN(uly) ? imgHeight : uly, 0), imgHeight);
+        const cleanLrx = Math.min(Math.max(isNaN(lrx) ? imgWidth : lrx, 0), imgWidth);
+        const cleanLry = Math.min(Math.max(isNaN(lry) ? imgHeight : lry, 0), imgHeight);
+
+        const minX = Math.min(cleanUlx, cleanLrx);
+        const maxX = Math.max(cleanUlx, cleanLrx);
+        const minY = Math.min(cleanUly, cleanLry);
+        const maxY = Math.max(cleanUly, cleanLry);
+
+        const width = Math.max(maxX - minX, 1); // enforce minimal size
+        const height = Math.max(maxY - minY, 1);
+
+        const rect = new OpenSeadragon.Rect(minX, minY, width, height);
+        const viewportRect = this.openSeaDragon.viewport.imageToViewportRectangle(rect);
+        this.openSeaDragon.viewport.fitBounds(viewportRect, true);
     }
     
     /**
