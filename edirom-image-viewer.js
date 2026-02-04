@@ -40,6 +40,7 @@
  * @method nextPage - Navigate to the next page in a sequence.
  * @method previousPage - Navigate to the previous page in a sequence.
  * @method goToPage - Navigate to a specific page number.
+ * @method jumpToZone - Navigate to a specific page and zoom to a defined zone.
  * @method getCurrentPage - Get the current page number.
  * @method getTotalPages - Get the total number of pages.
  * @method zoomIn - Zoom in by 20%.
@@ -313,11 +314,16 @@ class EdiromOpenseadragon extends HTMLElement {
                 this.goToPage(initialPage);
             }
             this.applyRegionZoom();
-        });
 
-        // Reapply region zoom on page changes
-        this.openSeaDragon.addHandler('page', () => {
-            this.applyRegionZoom();
+            // Reapply region zoom on page changes
+            this.openSeaDragon.addHandler('page', () => {
+                this.handlePageChange();
+            });
+
+            // Ensure region zoom applies when a new page is opened (crucial for sequence mode)
+            this.openSeaDragon.addHandler('open', () => {
+                this.handlePageChange();
+            });
         });
 
         // Ensure region zoom applies once tiles are available on first load
@@ -327,38 +333,113 @@ class EdiromOpenseadragon extends HTMLElement {
     }
 
     /**
+     * Handles zoom and view reset on page changes.
+     * Checks if a jumpToZone is pending or if standard attributes should be applied.
+     */
+    handlePageChange() {
+        if (!this.openSeaDragon) return;
+
+        if (this._jumpToZoneData) {
+            if (this.openSeaDragon.currentPage() === this._jumpToZoneData.pageNumber) {
+                // Only clear the data if the zoom was successfully applied
+                if (this.applyRegionZoom(this._jumpToZoneData)) {
+                    this._jumpToZoneData = null;
+                }
+            }
+        } else {
+            this.home();
+        }
+    }
+
+    /**
+     * Helper to get the current item being viewed.
+     * Handles sequence mode vs collection mode logic.
+     */
+    getCurrentItem() {
+        if (!this.openSeaDragon || !this.openSeaDragon.world) return null;
+        
+        // In sequence mode, the world usually holds just the current image at index 0
+        // We check if sequence mode is enabled (assuming it matches the attribute logic)
+        if (this.sequencemode === 'true') {
+             return this.openSeaDragon.world.getItemAt(0);
+        }
+        
+        // In standard/collection mode, use the page index
+        const idx = this.openSeaDragon.currentPage ? this.openSeaDragon.currentPage() : 0;
+        return this.openSeaDragon.world.getItemAt(idx) || this.openSeaDragon.world.getItemAt(0);
+    }
+
+    /**
+     * Jumps to a specific zone on a specified page.
+     * @param {object} zoneData - Object containing pageNumber, ulx, uly, lrx, lry.
+     */
+    jumpToZone(zoneData) {
+        if (!this.openSeaDragon) return;
+
+        const targetPage = parseInt(zoneData.pageNumber);
+        
+        this._jumpToZoneData = {
+            ...zoneData,
+            pageNumber: targetPage
+        };
+
+        if (this.openSeaDragon.currentPage() !== targetPage) {
+            this.goToPage(targetPage);
+        } else {
+            this.applyRegionZoom(this._jumpToZoneData);
+            this._jumpToZoneData = null;
+        }
+    }
+
+    /**
      * Applies a zoom to the rectangle defined by ulx, uly, lrx, lry (image pixel coordinates).
      * Missing values default to the maximum extent of the corresponding axis.
+     * @param {object} [customZone=null] - Optional object with ulx, uly, lrx, lry properties. 
+     * @returns {boolean} - True if zoom was applied, false otherwise.
      */
-    applyRegionZoom() {
+    applyRegionZoom(customZone = null) {
         if(!this.openSeaDragon || !this.openSeaDragon.world || !this.openSeaDragon.world.getItemCount()) {
-            return;
+            return false;
         }
 
-        // Only act if at least one coordinate attribute is present
-        const hasAnyCoord = this.hasAttribute('ulx') || this.hasAttribute('uly') || this.hasAttribute('lrx') || this.hasAttribute('lry');
+        // Only act if at least one coordinate attribute is present or customZone is passed
+        const hasAnyCoord = customZone || this.hasAttribute('ulx') || this.hasAttribute('uly') || this.hasAttribute('lrx') || this.hasAttribute('lry');
         if(!hasAnyCoord) {
-            return;
+            return false;
         }
 
-        const currentItem = this.openSeaDragon.world.getItemAt(this.openSeaDragon.currentPage ? this.openSeaDragon.currentPage() : 0) || this.openSeaDragon.world.getItemAt(0);
+        const currentItem = this.getCurrentItem ? this.getCurrentItem() : 
+            (this.openSeaDragon.world.getItemAt(this.openSeaDragon.currentPage ? this.openSeaDragon.currentPage() : 0) || this.openSeaDragon.world.getItemAt(0));
+            
         if(!currentItem) {
-            return;
+            return false;
         }
 
         const contentSize = currentItem.getContentSize();
         const imgWidth = contentSize.x;
         const imgHeight = contentSize.y;
 
-        const ulxAttr = this.getAttribute('ulx');
-        const ulyAttr = this.getAttribute('uly');
-        const lrxAttr = this.getAttribute('lrx');
-        const lryAttr = this.getAttribute('lry');
+        // If image not loaded yet, size might be 0? 
+        if (imgWidth === 0 || imgHeight === 0) return false;
 
-        const ulx = ulxAttr !== null ? parseFloat(ulxAttr) : imgWidth;
-        const uly = ulyAttr !== null ? parseFloat(ulyAttr) : imgHeight;
-        const lrx = lrxAttr !== null ? parseFloat(lrxAttr) : imgWidth;
-        const lry = lryAttr !== null ? parseFloat(lryAttr) : imgHeight;
+        let rawUlx, rawUly, rawLrx, rawLry;
+
+        if (customZone) {
+            rawUlx = customZone.ulx;
+            rawUly = customZone.uly;
+            rawLrx = customZone.lrx;
+            rawLry = customZone.lry;
+        } else {
+            rawUlx = this.getAttribute('ulx');
+            rawUly = this.getAttribute('uly');
+            rawLrx = this.getAttribute('lrx');
+            rawLry = this.getAttribute('lry');
+        }
+
+        const ulx = (rawUlx !== null && rawUlx !== undefined) ? parseFloat(rawUlx) : imgWidth;
+        const uly = (rawUly !== null && rawUly !== undefined) ? parseFloat(rawUly) : imgHeight;
+        const lrx = (rawLrx !== null && rawLrx !== undefined) ? parseFloat(rawLrx) : imgWidth;
+        const lry = (rawLry !== null && rawLry !== undefined) ? parseFloat(rawLry) : imgHeight;
 
         const cleanUlx = Math.min(Math.max(isNaN(ulx) ? imgWidth : ulx, 0), imgWidth);
         const cleanUly = Math.min(Math.max(isNaN(uly) ? imgHeight : uly, 0), imgHeight);
@@ -376,6 +457,8 @@ class EdiromOpenseadragon extends HTMLElement {
         const rect = new OpenSeadragon.Rect(minX, minY, width, height);
         const viewportRect = this.openSeaDragon.viewport.imageToViewportRectangle(rect);
         this.openSeaDragon.viewport.fitBounds(viewportRect, true);
+        
+        return true;
     }
     
     /**

@@ -106,6 +106,7 @@ The component provides the following public methods:
 - `nextPage()` - Navigate to the next page
 - `previousPage()` - Navigate to the previous page
 - `goToPage(pageNumber)` - Navigate to a specific page
+- `jumpToZone(zoneData)` - Navigate to a specific page and zoom to a defined zone. `zoneData` object: `{ pageNumber, ulx, uly, lrx, lry }`
 - `getCurrentPage()` - Get the current page number
 - `getTotalPages()` - Get the total number of pages
 
