@@ -386,7 +386,7 @@ class EdiromOpenseadragon extends HTMLElement {
         if (this.openSeaDragon.currentPage() !== targetPage) {
             this.goToPage(targetPage);
         } else {
-            this.applyRegionZoom(this._jumpToZoneData);
+            this.applyRegionZoom(this._jumpToZoneData, false);
             this._jumpToZoneData = null;
         }
     }
@@ -395,9 +395,10 @@ class EdiromOpenseadragon extends HTMLElement {
      * Applies a zoom to the rectangle defined by ulx, uly, lrx, lry (image pixel coordinates).
      * Missing values default to the maximum extent of the corresponding axis.
      * @param {object} [customZone=null] - Optional object with ulx, uly, lrx, lry properties. 
+     * @param {boolean} [immediately=true] - Whether to apply the zoom immediately (true) or animate (false).
      * @returns {boolean} - True if zoom was applied, false otherwise.
      */
-    applyRegionZoom(customZone = null) {
+    applyRegionZoom(customZone = null, immediately = true) {
         if(!this.openSeaDragon || !this.openSeaDragon.world || !this.openSeaDragon.world.getItemCount()) {
             return false;
         }
@@ -456,7 +457,7 @@ class EdiromOpenseadragon extends HTMLElement {
 
         const rect = new OpenSeadragon.Rect(minX, minY, width, height);
         const viewportRect = this.openSeaDragon.viewport.imageToViewportRectangle(rect);
-        this.openSeaDragon.viewport.fitBounds(viewportRect, true);
+        this.openSeaDragon.viewport.fitBounds(viewportRect, immediately);
         
         return true;
     }
