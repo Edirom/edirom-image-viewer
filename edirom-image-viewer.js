@@ -276,7 +276,7 @@ class EdiromOpenseadragon extends HTMLElement {
             preserveViewport: this.preserveviewport === 'true',
             visibilityRatio: parseFloat(this.visibilityratio) || 1.0,
             minZoomLevel: parseFloat(this.minzoomlevel) || 0.5,
-            defaultZoomLevel: parseFloat(this.defaultzoomlevel) || 1,
+            defaultZoomLevel: parseFloat(this.defaultzoomlevel) || null,
             maxZoomLevel: parseFloat(this.maxzoomlevel) || 10,
             showNavigationControl: this.shownavigationcontrol === 'true',
             tileSources: tileSources,
