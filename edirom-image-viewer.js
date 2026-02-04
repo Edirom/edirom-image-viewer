@@ -292,6 +292,14 @@ class EdiromOpenseadragon extends HTMLElement {
             // Merge additional options from openseadragon-options attribute
             ...this.options
         });
+
+        // Apply initial page selection once the viewer is ready
+        this.openSeaDragon.addOnceHandler('open', () => {
+            const initialPage = parseInt(this.pagenumber);
+            if (!isNaN(initialPage)) {
+                this.goToPage(initialPage);
+            }
+        });
     }
     
     /**
