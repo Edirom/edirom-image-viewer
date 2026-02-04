@@ -231,6 +231,11 @@ class EdiromOpenseadragon extends HTMLElement {
      * For IIIF manifests, fetches and parses the manifest to extract image URLs.
      */
     displayOpenSeadragon() {
+        // Ensure the viewer container exists before initialization
+        if (!this.shadowRoot || !this.shadowRoot.getElementById('viewer')) {
+            return;
+        }
+
         if (window.OpenSeadragon) {
 
             if(this.openSeaDragon) {
