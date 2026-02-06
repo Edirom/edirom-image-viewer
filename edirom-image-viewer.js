@@ -159,6 +159,20 @@ class EdiromImageViewer extends HTMLElement {
             #toolbar button:active {
                 background: #ddd;
             }
+            #page-input {
+                width: 60px;
+                height: 32px;
+                border: 1px solid #ccc;
+                border-radius: 4px;
+                padding: 0 8px;
+                text-align: center;
+                font-size: 14px;
+                font-family: monospace;
+            }
+            #page-input:focus {
+                outline: 2px solid #0078d4;
+                outline-offset: 0;
+            }
             #viewer {
                 flex: 1;
                 min-height: 0;
@@ -331,11 +345,36 @@ class EdiromImageViewer extends HTMLElement {
             '<polyline points="9 18 15 12 9 6"/>',
             () => this.nextPage());
 
+        // Page number input
+        this.pageInput = document.createElement('input');
+        this.pageInput.id = 'page-input';
+        this.pageInput.type = 'text';
+        this.pageInput.setAttribute('aria-label', 'Page number');
+        this.pageInput.setAttribute('title', 'Enter page number and press Enter');
+        this.pageInput.value = '0';
+        
+        this.pageInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                const pageNum = parseInt(this.pageInput.value);
+                if (!isNaN(pageNum) && pageNum >= 0 && pageNum < this.getTotalPages()) {
+                    this.goToPage(pageNum);
+                    // Update input after navigation to ensure it reflects the new page
+                    setTimeout(() => this.updatePageInput(), 0);
+                } else {
+                    // Reset to current page if invalid
+                    this.pageInput.value = this.getCurrentPage().toString();
+                }
+                this.pageInput.blur();
+            }
+        });
+
         this.toolbar.appendChild(this.btnZoomIn);
         this.toolbar.appendChild(this.btnZoomOut);
         this.toolbar.appendChild(this.btnHome);
         this.toolbar.appendChild(this.btnFullScreen);
         this.toolbar.appendChild(this.btnPrevPage);
+        this.toolbar.appendChild(this.pageInput);
         this.toolbar.appendChild(this.btnNextPage);
 
         this.shadowRoot.appendChild(this.toolbar);
@@ -435,11 +474,13 @@ class EdiromImageViewer extends HTMLElement {
             if (!isNaN(initialPage)) {
                 this.goToPage(initialPage);
             }
+            this.updatePageInput();
             this.applyRegionZoom();
 
             // Reapply region zoom on page changes
             this.openSeaDragon.addHandler('page', () => {
                 this.handlePageChange();
+                this.updatePageInput();
             });
 
             // Ensure region zoom applies when a new page is opened (crucial for sequence mode)
@@ -450,8 +491,18 @@ class EdiromImageViewer extends HTMLElement {
 
         // Ensure region zoom applies once tiles are available on first load
         this.openSeaDragon.addOnceHandler('tile-loaded', () => {
+            this.updatePageInput();
             this.applyRegionZoom();
         });
+    }
+
+    /**
+     * Updates the page number input field to reflect the current page.
+     */
+    updatePageInput() {
+        if (this.pageInput && this.openSeaDragon) {
+            this.pageInput.value = this.getCurrentPage().toString();
+        }
     }
 
     /**
@@ -646,7 +697,12 @@ class EdiromImageViewer extends HTMLElement {
     }
     
     getTotalPages() {
-        return this.openSeaDragon ? this.openSeaDragon.world.getItemCount() : 0;
+        if (!this.openSeaDragon) return 0;
+        // In sequence mode, use tileSources length; otherwise use world item count
+        if (this.sequencemode !== 'false' && this.openSeaDragon.tileSources) {
+            return this.openSeaDragon.tileSources.length;
+        }
+        return this.openSeaDragon.world.getItemCount();
     }
     
     // Home/reset view
