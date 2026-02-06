@@ -71,6 +71,9 @@ class EdiromImageViewer extends HTMLElement {
         /** @type {object} Additional OpenSeadragon options */
         this.options = this.getAttribute('openseadragon-options') ? 
             JSON.parse(this.getAttribute('openseadragon-options')) : {};
+
+        /** @private */
+        this._onFullScreenChange = () => this.updateFullScreenButtonState();
     }
 
     /**
@@ -177,6 +180,7 @@ class EdiromImageViewer extends HTMLElement {
                 flex: 1;
                 min-height: 0;
                 width: 100%;
+                height: 100%;
             }
         `;
         this.shadowRoot.appendChild(style);
@@ -201,6 +205,13 @@ class EdiromImageViewer extends HTMLElement {
                 this.set('tilesources', this.getAttribute('tilesources'));
             }
         };
+
+        document.addEventListener('fullscreenchange', this._onFullScreenChange);
+        this.updateFullScreenButtonState();
+    }
+
+    disconnectedCallback() {
+        document.removeEventListener('fullscreenchange', this._onFullScreenChange);
     }
 
     /**
@@ -314,6 +325,7 @@ class EdiromImageViewer extends HTMLElement {
      * Called once during connectedCallback.
      */
     createToolbar() {
+        console.log("Creating toolbar");
         this.toolbar = document.createElement('div');
         this.toolbar.id = 'toolbar';
 
@@ -458,7 +470,8 @@ class EdiromImageViewer extends HTMLElement {
             showNavigator: this.shownavigator !== 'false',
             showZoomControl: this.showzoomcontrol === 'true',
             showHomeControl: this.showhomecontrol === 'true',
-            showFullPageControl: this.showfullpagecontrol === 'true',
+            // Disable OSD full page control to avoid DOM reparenting; we handle fullscreen ourselves
+            showFullPageControl: false,
             showSequenceControl: this.showsequencecontrol === 'true',
             sequenceMode: this.sequencemode !== 'false',
             gestureSettingsMouse: {
@@ -753,20 +766,47 @@ class EdiromImageViewer extends HTMLElement {
     }
     
     // Full screen methods
-    setFullScreen(fullScreen) {
-        if(this.openSeaDragon) {
-            this.openSeaDragon.setFullScreen(fullScreen);
+    async setFullScreen(fullScreen) {
+        try {
+            if (fullScreen) {
+                await this.enterComponentFullScreen();
+            } else {
+                await this.exitComponentFullScreen();
+            }
+        } catch (err) {
+            console.error('Fullscreen request failed:', err);
         }
     }
-    
-    toggleFullScreen() {
-        if(this.openSeaDragon) {
-            this.openSeaDragon.setFullScreen(!this.openSeaDragon.isFullPage());
-        }
+
+    async toggleFullScreen() {
+        await this.setFullScreen(!this.isFullScreen());
     }
     
     isFullScreen() {
-        return this.openSeaDragon ? this.openSeaDragon.isFullPage() : false;
+        return document.fullscreenElement === this;
+    }
+
+    async enterComponentFullScreen() {
+        if (!this.isFullScreen()) {
+            await this.requestFullscreen({ navigationUI: 'hide' }).catch((err) => {
+                console.error('Failed to enter fullscreen:', err);
+            });
+        }
+    }
+
+    async exitComponentFullScreen() {
+        if (this.isFullScreen()) {
+            await document.exitFullscreen().catch((err) => {
+                console.error('Failed to exit fullscreen:', err);
+            });
+        }
+    }
+
+    updateFullScreenButtonState() {
+        const isFs = this.isFullScreen();
+        if (this.btnFullScreen) {
+            this.btnFullScreen.setAttribute('aria-pressed', String(isFs));
+        }
     }
     
     // Rotation methods
