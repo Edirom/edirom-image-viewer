@@ -122,26 +122,70 @@ class EdiromImageViewer extends HTMLElement {
      */
     connectedCallback() {
         console.log("Connected to DOM");
+
+        // Scoped styles
+        const style = document.createElement('style');
+        style.textContent = `
+            :host {
+                display: flex;
+                flex-direction: column;
+                overflow: hidden;
+            }
+            #toolbar {
+                display: flex;
+                align-items: center;
+                gap: 4px;
+                padding: 4px 8px;
+                background: #f5f5f5;
+                border-bottom: 1px solid #ddd;
+                flex-shrink: 0;
+            }
+            #toolbar button {
+                display: inline-flex;
+                align-items: center;
+                justify-content: center;
+                width: 32px;
+                height: 32px;
+                border: 1px solid #ccc;
+                border-radius: 4px;
+                background: #fff;
+                cursor: pointer;
+                color: #333;
+                padding: 0;
+            }
+            #toolbar button:hover {
+                background: #e8e8e8;
+            }
+            #toolbar button:active {
+                background: #ddd;
+            }
+            #viewer {
+                flex: 1;
+                min-height: 0;
+                width: 100%;
+            }
+        `;
+        this.shadowRoot.appendChild(style);
+
+        // Load OpenSeadragon
         const osdScript = document.createElement('script');
         osdScript.src = "https://cdnjs.cloudflare.com/ajax/libs/openseadragon/4.1.1/openseadragon.min.js";
         osdScript.defer = true;
         this.shadowRoot.appendChild(osdScript);
-       
+
+        // Create toolbar
+        this.createToolbar();
 
         // Create a div for the OpenSeadragon viewer
         this.viewerDiv = document.createElement('div');
         this.viewerDiv.id = 'viewer';
-        this.viewerDiv.style.width = '100%';
-        this.viewerDiv.style.height = '100%';
         this.shadowRoot.appendChild(this.viewerDiv);
-        
-        
+
         // Callback when the script is loaded
         osdScript.onload = () => {
             if (window.OpenSeadragon) {
                 this.set('tilesources', this.getAttribute('tilesources'));
             }
-            
         };
     }
 
@@ -199,14 +243,20 @@ class EdiromImageViewer extends HTMLElement {
             case 'visibilityratio':
             case 'minzoomlevel':
             case 'maxzoomlevel':
-            case 'shownavigationcontrol':
             case 'sequencemode':
-            case 'showfullpagecontrol':
             case 'shownavigator':
+                // These OpenSeadragon properties require recreating the viewer
+                if(this.openSeaDragon) {
+                    this.displayOpenSeadragon();
+                }
+                break;
+
+            case 'shownavigationcontrol':
             case 'showzoomcontrol':
             case 'showhomecontrol':
+            case 'showfullpagecontrol':
             case 'showsequencecontrol':
-                // These control visibility properties require recreating the viewer
+                // These OSD control attributes require recreating the viewer
                 if(this.openSeaDragon) {
                     this.displayOpenSeadragon();
                 }
@@ -223,6 +273,72 @@ class EdiromImageViewer extends HTMLElement {
       
         }
     
+    }
+
+    /**
+     * Creates a single toolbar button with an SVG icon.
+     * @param {string} label - Accessible label for the button.
+     * @param {string} title - Tooltip text.
+     * @param {string} svgContent - Inner SVG markup for the icon.
+     * @param {Function} clickHandler - Click event handler.
+     * @returns {HTMLButtonElement} The created button element.
+     */
+    createButton(label, title, svgContent, clickHandler) {
+        const button = document.createElement('button');
+        button.setAttribute('aria-label', label);
+        button.setAttribute('title', title);
+        button.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${svgContent}</svg>`;
+        button.addEventListener('click', (e) => {
+            e.preventDefault();
+            clickHandler();
+        });
+        return button;
+    }
+
+    /**
+     * Creates the custom toolbar with navigation buttons and appends it to the shadow DOM.
+     * Called once during connectedCallback.
+     */
+    createToolbar() {
+        this.toolbar = document.createElement('div');
+        this.toolbar.id = 'toolbar';
+
+        // Zoom controls
+        this.btnZoomIn = this.createButton('Zoom in', 'Zoom in',
+            '<circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/><line x1="11" y1="8" x2="11" y2="14"/><line x1="8" y1="11" x2="14" y2="11"/>',
+            () => this.zoomIn());
+
+        this.btnZoomOut = this.createButton('Zoom out', 'Zoom out',
+            '<circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/><line x1="8" y1="11" x2="14" y2="11"/>',
+            () => this.zoomOut());
+
+        // Home control
+        this.btnHome = this.createButton('Reset view', 'Reset view',
+            '<path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/>',
+            () => this.home());
+
+        // Fullscreen control
+        this.btnFullScreen = this.createButton('Toggle fullscreen', 'Toggle fullscreen',
+            '<polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/><line x1="21" y1="3" x2="14" y2="10"/><line x1="3" y1="21" x2="10" y2="14"/>',
+            () => this.toggleFullScreen());
+
+        // Sequence controls
+        this.btnPrevPage = this.createButton('Previous page', 'Previous page',
+            '<polyline points="15 18 9 12 15 6"/>',
+            () => this.previousPage());
+
+        this.btnNextPage = this.createButton('Next page', 'Next page',
+            '<polyline points="9 18 15 12 9 6"/>',
+            () => this.nextPage());
+
+        this.toolbar.appendChild(this.btnZoomIn);
+        this.toolbar.appendChild(this.btnZoomOut);
+        this.toolbar.appendChild(this.btnHome);
+        this.toolbar.appendChild(this.btnFullScreen);
+        this.toolbar.appendChild(this.btnPrevPage);
+        this.toolbar.appendChild(this.btnNextPage);
+
+        this.shadowRoot.appendChild(this.toolbar);
     }
 
     /**
@@ -297,13 +413,14 @@ class EdiromImageViewer extends HTMLElement {
             minZoomLevel: parseFloat(this.minzoomlevel) || 0.5,
             defaultZoomLevel: parseFloat(this.defaultzoomlevel) || null,
             maxZoomLevel: parseFloat(this.maxzoomlevel) || 10,
-            showNavigationControl: this.shownavigationcontrol !== 'false',
+            // OSD built-in controls are hidden by default; set attribute to 'true' to show
+            showNavigationControl: this.shownavigationcontrol === 'true',
             tileSources: tileSources,
             showNavigator: this.shownavigator !== 'false',
-            showZoomControl: this.showzoomcontrol !== 'false',
-            showHomeControl: this.showhomecontrol !== 'false',
-            showFullPageControl: this.showfullpagecontrol !== 'false',
-            showSequenceControl: this.showsequencecontrol !== 'false',
+            showZoomControl: this.showzoomcontrol === 'true',
+            showHomeControl: this.showhomecontrol === 'true',
+            showFullPageControl: this.showfullpagecontrol === 'true',
+            showSequenceControl: this.showsequencecontrol === 'true',
             sequenceMode: this.sequencemode !== 'false',
             gestureSettingsMouse: {
                 clickToZoom: this.clicktozoom !== 'false',
