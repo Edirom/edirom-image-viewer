@@ -1,7 +1,7 @@
 /**
  * Custom Web Component for viewing IIIF images using the OpenSeadragon viewer.
  * 
- * <edirom-openseadragon> provides an interface to load, view, and interact with IIIF images
+ * <edirom-image-viewer> provides an interface to load, view, and interact with IIIF images
  * using the OpenSeadragon JavaScript library. It supports dynamic attribute changes, zooming,
  * page navigation, rotation, and various viewer controls.
  * 
@@ -9,7 +9,7 @@
  * @extends HTMLElement
  * 
  * @example
- * <edirom-openseadragon tilesources='["manifest.json"]'></edirom-openseadragon>
+ * <edirom-image-viewer tilesources='["manifest.json"]'></edirom-image-viewer>
  * 
  * @attribute {string} tilesources - JSON string array of IIIF manifest URLs or tile source objects.
  * @attribute {number} pagenumber - The current page/image number to display (for multi-image sequences).
@@ -55,9 +55,9 @@
  * @method setRotation - Set rotation to specific angle.
  * @method getRotation - Get current rotation angle.
  */
-class EdiromOpenseadragon extends HTMLElement {
+class EdiromImageViewer extends HTMLElement {
     /**
-     * Creates an instance of EdiromOpenseadragon.
+     * Creates an instance of EdiromImageViewer.
      * @constructor
      */
     constructor() {
@@ -214,7 +214,7 @@ class EdiromOpenseadragon extends HTMLElement {
             
             case 'clicktozoom':
                 if(this.openSeaDragon) {
-                    this.openSeaDragon.gestureSettingsMouse.clickToZoom = newPropertyValue === 'true';
+                    this.openSeaDragon.gestureSettingsMouse.clickToZoom = newPropertyValue !== 'false';
                 }
                 break;
             // handle default
@@ -292,21 +292,21 @@ class EdiromOpenseadragon extends HTMLElement {
     initializeViewer(tileSources) {
         this.openSeaDragon = OpenSeadragon({
             element: this.shadowRoot.getElementById('viewer'),
-            preserveViewport: this.preserveviewport === 'true',
+            preserveViewport: this.preserveviewport !== 'false',
             visibilityRatio: parseFloat(this.visibilityratio) || 1.0,
             minZoomLevel: parseFloat(this.minzoomlevel) || 0.5,
             defaultZoomLevel: parseFloat(this.defaultzoomlevel) || null,
             maxZoomLevel: parseFloat(this.maxzoomlevel) || 10,
-            showNavigationControl: this.shownavigationcontrol === 'true',
+            showNavigationControl: this.shownavigationcontrol !== 'false',
             tileSources: tileSources,
-            showNavigator:  this.shownavigator === 'true',
-            showZoomControl:  this.showzoomcontrol === 'true',
-            showHomeControl:  this.showhomecontrol === 'true',
-            showFullPageControl:  this.showfullpagecontrol === 'true',
-            showSequenceControl:  this.showsequencecontrol === 'true',
-            sequenceMode: this.sequencemode === 'true',
+            showNavigator: this.shownavigator !== 'false',
+            showZoomControl: this.showzoomcontrol !== 'false',
+            showHomeControl: this.showhomecontrol !== 'false',
+            showFullPageControl: this.showfullpagecontrol !== 'false',
+            showSequenceControl: this.showsequencecontrol !== 'false',
+            sequenceMode: this.sequencemode !== 'false',
             gestureSettingsMouse: {
-              clickToZoom: this.clicktozoom === 'true',
+                clickToZoom: this.clicktozoom !== 'false',
             },
             // Merge additional options from openseadragon-options attribute
             ...this.options
@@ -365,7 +365,7 @@ class EdiromOpenseadragon extends HTMLElement {
         
         // In sequence mode, the world usually holds just the current image at index 0
         // We check if sequence mode is enabled (assuming it matches the attribute logic)
-        if (this.sequencemode === 'true') {
+        if (this.sequencemode !== 'false') {
              return this.openSeaDragon.world.getItemAt(0);
         }
         
@@ -576,4 +576,4 @@ class EdiromOpenseadragon extends HTMLElement {
     }
 }
 
-customElements.define('edirom-openseadragon', EdiromOpenseadragon);
+customElements.define('edirom-image-viewer', EdiromImageViewer);
