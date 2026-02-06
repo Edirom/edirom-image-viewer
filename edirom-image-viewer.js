@@ -351,13 +351,13 @@ class EdiromImageViewer extends HTMLElement {
         this.pageInput.type = 'text';
         this.pageInput.setAttribute('aria-label', 'Page number');
         this.pageInput.setAttribute('title', 'Enter page number and press Enter');
-        this.pageInput.value = '0';
+        this.pageInput.value = '1';
         
         this.pageInput.addEventListener('keydown', (e) => {
             if (e.key === 'Enter') {
                 e.preventDefault();
                 const pageNum = parseInt(this.pageInput.value);
-                if (!isNaN(pageNum) && pageNum >= 0 && pageNum < this.getTotalPages()) {
+                if (!isNaN(pageNum) && pageNum >= 1 && pageNum <= this.getTotalPages()) {
                     this.goToPage(pageNum);
                     // Update input after navigation to ensure it reflects the new page
                     setTimeout(() => this.updatePageInput(), 0);
@@ -471,7 +471,7 @@ class EdiromImageViewer extends HTMLElement {
         // Apply initial page selection once the viewer is ready
         this.openSeaDragon.addOnceHandler('open', () => {
             const initialPage = parseInt(this.getAttribute('pagenumber') ?? this.pagenumber);
-            if (!isNaN(initialPage)) {
+            if (!isNaN(initialPage) && initialPage >= 1) {
                 this.goToPage(initialPage);
             }
             this.updatePageInput();
@@ -513,7 +513,7 @@ class EdiromImageViewer extends HTMLElement {
         if (!this.openSeaDragon) return;
 
         if (this._jumpToZoneData) {
-            if (this.openSeaDragon.currentPage() === this._jumpToZoneData.pageNumber) {
+            if (this.getCurrentPage() === this._jumpToZoneData.pageNumber) {
                 // Only clear the data if the zoom was successfully applied
                 if (this.applyRegionZoom(this._jumpToZoneData)) {
                     this._jumpToZoneData = null;
@@ -544,7 +544,7 @@ class EdiromImageViewer extends HTMLElement {
 
     /**
      * Jumps to a specific zone on a specified page.
-     * @param {object} zoneData - Object containing pageNumber, ulx, uly, lrx, lry.
+     * @param {object} zoneData - Object containing pageNumber (1-based), ulx, uly, lrx, lry.
      */
     jumpToZone(zoneData) {
         if (!this.openSeaDragon) return;
@@ -556,7 +556,7 @@ class EdiromImageViewer extends HTMLElement {
             pageNumber: targetPage
         };
 
-        if (this.openSeaDragon.currentPage() !== targetPage) {
+        if (this.getCurrentPage() !== targetPage) {
             this.goToPage(targetPage);
         } else {
             this.applyRegionZoom(this._jumpToZoneData, false);
@@ -688,12 +688,14 @@ class EdiromImageViewer extends HTMLElement {
     
     goToPage(pageNumber) {
         if(this.openSeaDragon && !isNaN(pageNumber)) {
-            this.openSeaDragon.goToPage(pageNumber);
+            // Convert 1-based page number to 0-based for OpenSeadragon
+            this.openSeaDragon.goToPage(pageNumber - 1);
         }
     }
     
     getCurrentPage() {
-        return this.openSeaDragon ? this.openSeaDragon.currentPage() : 0;
+        // Convert 0-based OpenSeadragon page to 1-based
+        return this.openSeaDragon ? this.openSeaDragon.currentPage() + 1 : 1;
     }
     
     getTotalPages() {
