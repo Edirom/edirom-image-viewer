@@ -520,7 +520,8 @@ class EdiromImageViewer extends HTMLElement {
                 }
             }
         } else {
-            this.home();
+            // Reset viewport to home position (not the enhanced home button behavior)
+            this.openSeaDragon.viewport.goHome(true);
         }
     }
 
@@ -547,6 +548,7 @@ class EdiromImageViewer extends HTMLElement {
      * @param {object} zoneData - Object containing pageNumber (1-based), ulx, uly, lrx, lry.
      */
     jumpToZone(zoneData) {
+        console.log("Jumping to zone:", zoneData);
         if (!this.openSeaDragon) return;
 
         const targetPage = parseInt(zoneData.pageNumber);
@@ -710,6 +712,42 @@ class EdiromImageViewer extends HTMLElement {
     // Home/reset view
     home() {
         if(this.openSeaDragon) {
+            const configuredPage = this.getAttribute('pagenumber');
+            const hasZoneAttributes = this.hasAttribute('ulx') || this.hasAttribute('uly') ||
+                this.hasAttribute('lrx') || this.hasAttribute('lry');
+
+            // If pagenumber attribute is set, jump to that page (and zone if coordinates exist)
+            if (configuredPage) {
+                const targetPage = parseInt(configuredPage);
+                if (!isNaN(targetPage) && targetPage >= 1) {
+                    // If zone coordinates are set, use jumpToZone
+                    if (hasZoneAttributes) {
+                        this.jumpToZone({
+                            pageNumber: targetPage,
+                            ulx: this.getAttribute('ulx'),
+                            uly: this.getAttribute('uly'),
+                            lrx: this.getAttribute('lrx'),
+                            lry: this.getAttribute('lry')
+                        });
+                    } else {
+                        // No zone, just navigate and go home on that page
+                        if (this.getCurrentPage() !== targetPage) {
+                            this.goToPage(targetPage);
+                        } else {
+                            this.openSeaDragon.viewport.goHome(true);
+                        }
+                    }
+                    return;
+                }
+            }
+
+            // If only zone attributes are set (no pagenumber), apply zoom to current page
+            if (hasZoneAttributes) {
+                this.applyRegionZoom(null, true);
+                return;
+            }
+
+            // Default behavior: use OpenSeadragon's home
             this.openSeaDragon.viewport.goHome(true);
         }
     }
