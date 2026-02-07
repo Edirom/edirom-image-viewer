@@ -74,6 +74,13 @@ class EdiromImageViewer extends HTMLElement {
 
         /** @private */
         this._onFullScreenChange = () => this.updateFullScreenButtonState();
+
+        /** @private */
+        this._restrictZoneConfig = null;
+        /** @private */
+        this._isClamping = false;
+        /** @private */
+        this._enforceRestrictionHandler = () => this.enforceRestriction(true);
     }
 
     /**
@@ -82,7 +89,7 @@ class EdiromImageViewer extends HTMLElement {
      * @returns {Array<string>} The list of observed attributes.
      */
     static get observedAttributes() {
-        return ['preserveviewport', 'clicktozoom', 'visibilityratio', 'minzoomlevel', 'maxzoomlevel', 'shownavigationcontrol',  'sequencemode', 'shownavigator', 'showzoomcontrol', 'showhomecontrol', 'showfullpagecontrol', 'showsequencecontrol', 'tilesources', 'pagenumber', 'zoom', 'rotation', 'triggerhome', 'triggerfullscreen', 'openseadragon-options', 'ulx', 'uly', 'lrx', 'lry'];
+        return ['preserveviewport', 'clicktozoom', 'visibilityratio', 'minzoomlevel', 'maxzoomlevel', 'shownavigationcontrol',  'sequencemode', 'shownavigator', 'showzoomcontrol', 'showhomecontrol', 'showfullpagecontrol', 'showsequencecontrol', 'tilesources', 'pagenumber', 'zoom', 'rotation', 'triggerhome', 'triggerfullscreen', 'openseadragon-options', 'ulx', 'uly', 'lrx', 'lry', 'restrict-to-zone'];
     }
 
     /**
@@ -261,6 +268,13 @@ class EdiromImageViewer extends HTMLElement {
             case 'lry':
                 if(this.openSeaDragon) {
                     this.applyRegionZoom();
+                }
+                break;
+
+            case 'restrict-to-zone':
+                this._restrictZoneConfig = this.parseRestrictZoneConfig(newPropertyValue);
+                if(this.openSeaDragon) {
+                    this.enforceRestriction(true);
                 }
                 break;
 
@@ -506,7 +520,11 @@ class EdiromImageViewer extends HTMLElement {
         this.openSeaDragon.addOnceHandler('tile-loaded', () => {
             this.updatePageInput();
             this.applyRegionZoom();
+                this.enforceRestriction(true);
         });
+
+        this.openSeaDragon.addHandler('animation', this._enforceRestrictionHandler);
+        this.openSeaDragon.addHandler('resize', this._enforceRestrictionHandler);
     }
 
     /**
@@ -536,6 +554,8 @@ class EdiromImageViewer extends HTMLElement {
             // Reset viewport to home position (not the enhanced home button behavior)
             this.openSeaDragon.viewport.goHome(true);
         }
+
+        this.enforceRestriction(true);
     }
 
     /**
@@ -761,7 +781,13 @@ class EdiromImageViewer extends HTMLElement {
             }
 
             // Default behavior: use OpenSeadragon's home
-            this.openSeaDragon.viewport.goHome(true);
+            const restrictRect = this.getRestrictionZoneRect();
+            if (restrictRect) {
+                const allowedRect = this.computeAllowedViewportRect(restrictRect);
+                this.openSeaDragon.viewport.fitBounds(allowedRect, true);
+            } else {
+                this.openSeaDragon.viewport.goHome(true);
+            }
         }
     }
     
@@ -826,6 +852,97 @@ class EdiromImageViewer extends HTMLElement {
     
     getRotation() {
         return this.openSeaDragon ? this.openSeaDragon.viewport.getRotation() : 0;
+    }
+
+    parseRestrictZoneConfig(rawValue) {
+        if(!rawValue) return null;
+        try {
+            const cfg = JSON.parse(rawValue);
+            if(!cfg || typeof cfg !== 'object') return null;
+            const pageNumber = parseInt(cfg.pageNumber);
+            const ulx = parseFloat(cfg.ulx);
+            const uly = parseFloat(cfg.uly);
+            const lrx = parseFloat(cfg.lrx);
+            const lry = parseFloat(cfg.lry);
+            if([pageNumber, ulx, uly, lrx, lry].some((v) => Number.isNaN(v))) return null;
+            return { pageNumber, ulx, uly, lrx, lry };
+        } catch (err) {
+            console.error('Invalid restrict-to-zone JSON:', err);
+            return null;
+        }
+    }
+
+    getRestrictionZoneRect() {
+        if(!this.openSeaDragon || !this._restrictZoneConfig) return null;
+        const currentPage = this.getCurrentPage();
+        if(currentPage !== this._restrictZoneConfig.pageNumber) return null;
+
+        const { ulx, uly, lrx, lry } = this._restrictZoneConfig;
+        const minX = Math.min(ulx, lrx);
+        const maxX = Math.max(ulx, lrx);
+        const minY = Math.min(uly, lry);
+        const maxY = Math.max(uly, lry);
+        const width = Math.max(maxX - minX, 1);
+        const height = Math.max(maxY - minY, 1);
+        return new OpenSeadragon.Rect(minX, minY, width, height);
+    }
+
+    computeAllowedViewportRect(zoneRect) {
+        if(!this.openSeaDragon || !zoneRect) return null;
+        return this.openSeaDragon.viewport.imageToViewportRectangle(zoneRect);
+    }
+
+    computeMinZoomForZone(zoneRect) {
+        if(!this.openSeaDragon) return null;
+        const viewport = this.openSeaDragon.viewport;
+        const currentZoom = viewport.getZoom();
+        const bounds = viewport.getBounds(true);
+        // Project how zoom affects bounds: width_new = bounds.width * currentZoom / targetZoom
+        const widthZoom = (bounds.width * currentZoom) / zoneRect.width;
+        const heightZoom = (bounds.height * currentZoom) / zoneRect.height;
+        const minZoom = Math.max(widthZoom, heightZoom);
+        return Number.isFinite(minZoom) ? minZoom : null;
+    }
+
+    clampBoundsToAllowedRect(bounds, allowedRect) {
+        if(!bounds || !allowedRect) return bounds;
+        const scale = Math.min(allowedRect.width / bounds.width, allowedRect.height / bounds.height, 1);
+        const width = bounds.width * scale;
+        const height = bounds.height * scale;
+        const maxX = allowedRect.x + allowedRect.width - width;
+        const maxY = allowedRect.y + allowedRect.height - height;
+        const x = Math.min(Math.max(bounds.x, allowedRect.x), maxX);
+        const y = Math.min(Math.max(bounds.y, allowedRect.y), maxY);
+        return new OpenSeadragon.Rect(x, y, width, height);
+    }
+
+    enforceRestriction(immediately = true) {
+        if(this._isClamping || !this.openSeaDragon) return false;
+        const zoneRect = this.getRestrictionZoneRect();
+        if(!zoneRect) return false;
+
+        const allowedRect = this.computeAllowedViewportRect(zoneRect);
+        if(!allowedRect) return false;
+
+        const minZoom = this.computeMinZoomForZone(zoneRect);
+        const viewport = this.openSeaDragon.viewport;
+        if(minZoom && viewport.getZoom() + 1e-8 < minZoom) {
+            this._isClamping = true;
+            viewport.zoomTo(minZoom, null, immediately);
+            this._isClamping = false;
+        }
+
+        const bounds = viewport.getBounds(true);
+        const clamped = this.clampBoundsToAllowedRect(bounds, allowedRect);
+        const changed = Math.abs(bounds.x - clamped.x) > 1e-6 || Math.abs(bounds.y - clamped.y) > 1e-6 || Math.abs(bounds.width - clamped.width) > 1e-6 || Math.abs(bounds.height - clamped.height) > 1e-6;
+
+        if(changed) {
+            this._isClamping = true;
+            viewport.fitBounds(clamped, immediately);
+            this._isClamping = false;
+        }
+
+        return changed;
     }
 }
 
