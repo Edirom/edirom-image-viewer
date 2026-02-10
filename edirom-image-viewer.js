@@ -81,6 +81,10 @@ class EdiromImageViewer extends HTMLElement {
         this._isClamping = false;
         /** @private */
         this._enforceRestrictionHandler = () => this.enforceRestriction(true);
+        /** @private */
+        this._onlyRevealZones = [];
+        /** @private */
+        this._updateRevealOverlayHandler = () => this.updateRevealOverlay();
     }
 
     /**
@@ -89,7 +93,7 @@ class EdiromImageViewer extends HTMLElement {
      * @returns {Array<string>} The list of observed attributes.
      */
     static get observedAttributes() {
-        return ['preserveviewport', 'clicktozoom', 'visibilityratio', 'minzoomlevel', 'maxzoomlevel', 'shownavigationcontrol',  'sequencemode', 'shownavigator', 'showzoomcontrol', 'showhomecontrol', 'showfullpagecontrol', 'showsequencecontrol', 'tilesources', 'pagenumber', 'zoom', 'rotation', 'triggerhome', 'triggerfullscreen', 'openseadragon-options', 'ulx', 'uly', 'lrx', 'lry', 'restrict-to-zone'];
+        return ['preserveviewport', 'clicktozoom', 'visibilityratio', 'minzoomlevel', 'maxzoomlevel', 'shownavigationcontrol', 'sequencemode', 'shownavigator', 'showzoomcontrol', 'showhomecontrol', 'showfullpagecontrol', 'showsequencecontrol', 'tilesources', 'pagenumber', 'zoom', 'rotation', 'triggerhome', 'triggerfullscreen', 'openseadragon-options', 'ulx', 'uly', 'lrx', 'lry', 'restrict-to-zone', 'only-reveal-zones'];
     }
 
     /**
@@ -188,6 +192,7 @@ class EdiromImageViewer extends HTMLElement {
                 min-height: 0;
                 width: 100%;
                 height: 100%;
+                position: relative;
             }
         `;
         this.shadowRoot.appendChild(style);
@@ -205,6 +210,25 @@ class EdiromImageViewer extends HTMLElement {
         this.viewerDiv = document.createElement('div');
         this.viewerDiv.id = 'viewer';
         this.shadowRoot.appendChild(this.viewerDiv);
+
+        // Overlay to hide everything except reveal zones
+        this.revealOverlay = document.createElement('div');
+        this.revealOverlay.id = 'reveal-overlay';
+        Object.assign(this.revealOverlay.style, {
+            position: 'absolute',
+            inset: '0',
+            pointerEvents: 'none',
+            background: 'transparent',
+            display: 'none',
+            maskRepeat: 'no-repeat',
+            maskPosition: '0 0',
+            maskSize: '100% 100%',
+            WebkitMaskRepeat: 'no-repeat',
+            WebkitMaskPosition: '0 0',
+            WebkitMaskSize: '100% 100%',
+            zIndex: '10'
+        });
+        this.viewerDiv.appendChild(this.revealOverlay);
 
         // Callback when the script is loaded
         osdScript.onload = () => {
@@ -275,6 +299,13 @@ class EdiromImageViewer extends HTMLElement {
                 this._restrictZoneConfig = this.parseRestrictZoneConfig(newPropertyValue);
                 if(this.openSeaDragon) {
                     this.enforceRestriction(true);
+                }
+                break;
+
+            case 'only-reveal-zones':
+                this._onlyRevealZones = this.parseOnlyRevealZones(newPropertyValue);
+                if (this.openSeaDragon) {
+                    this.updateRevealOverlay();
                 }
                 break;
 
@@ -521,10 +552,17 @@ class EdiromImageViewer extends HTMLElement {
             this.updatePageInput();
             this.applyRegionZoom();
                 this.enforceRestriction(true);
+            this.updateRevealOverlay();
         });
 
         this.openSeaDragon.addHandler('animation', this._enforceRestrictionHandler);
         this.openSeaDragon.addHandler('resize', this._enforceRestrictionHandler);
+        this.openSeaDragon.addHandler('animation', this._updateRevealOverlayHandler);
+        this.openSeaDragon.addHandler('resize', this._updateRevealOverlayHandler);
+        this.openSeaDragon.addHandler('page', this._updateRevealOverlayHandler);
+        this.openSeaDragon.addHandler('open', this._updateRevealOverlayHandler);
+        this.openSeaDragon.addHandler('zoom', this._updateRevealOverlayHandler);
+        this.openSeaDragon.addHandler('pan', this._updateRevealOverlayHandler);
     }
 
     /**
@@ -556,6 +594,7 @@ class EdiromImageViewer extends HTMLElement {
         }
 
         this.enforceRestriction(true);
+        this.updateRevealOverlay();
     }
 
     /**
@@ -854,6 +893,28 @@ class EdiromImageViewer extends HTMLElement {
         return this.openSeaDragon ? this.openSeaDragon.viewport.getRotation() : 0;
     }
 
+    parseOnlyRevealZones(rawValue) {
+        if (!rawValue) return [];
+        try {
+            const arr = JSON.parse(rawValue);
+            if (!Array.isArray(arr)) return [];
+            return arr
+                .map((entry) => {
+                    const pageNumber = parseInt(entry.pageNumber);
+                    const ulx = parseFloat(entry.ulx);
+                    const uly = parseFloat(entry.uly);
+                    const lrx = parseFloat(entry.lrx);
+                    const lry = parseFloat(entry.lry);
+                    if ([pageNumber, ulx, uly, lrx, lry].some((v) => Number.isNaN(v))) return null;
+                    return { pageNumber, ulx, uly, lrx, lry };
+                })
+                .filter(Boolean);
+        } catch (err) {
+            console.error('Invalid only-reveal-zones JSON:', err);
+            return [];
+        }
+    }
+
     parseRestrictZoneConfig(rawValue) {
         if(!rawValue) return null;
         try {
@@ -943,6 +1004,55 @@ class EdiromImageViewer extends HTMLElement {
         }
 
         return changed;
+    }
+
+    buildMaskSvg(width, height, rects) {
+        const holeRects = rects
+            .map(({ x, y, width: w, height: h }) => `<rect x="${x}" y="${y}" width="${w}" height="${h}" fill="black"/>`)
+            .join('');
+        return `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}"><defs><mask id="reveal-mask" maskUnits="userSpaceOnUse" maskContentUnits="userSpaceOnUse"><rect width="100%" height="100%" fill="white"/>${holeRects}</mask></defs><rect width="100%" height="100%" fill="black" mask="url(#reveal-mask)"/></svg>`;
+    }
+
+    updateRevealOverlay() {
+        if (!this.revealOverlay || !this.openSeaDragon) return;
+        const currentPage = this.getCurrentPage();
+        const zones = this._onlyRevealZones.filter((z) => z.pageNumber === currentPage);
+        const hasAnyZonesConfigured = this._onlyRevealZones.length > 0;
+        if (!zones.length && !hasAnyZonesConfigured) {
+            this.revealOverlay.style.display = 'none';
+            this.revealOverlay.innerHTML = '';
+            return;
+        }
+
+        const viewport = this.openSeaDragon.viewport;
+        const viewerRect = this.openSeaDragon.container.getBoundingClientRect();
+        const width = Math.max(Math.floor(viewerRect.width), 1);
+        const height = Math.max(Math.floor(viewerRect.height), 1);
+        if (!width || !height) {
+            this.revealOverlay.style.display = 'none';
+            return;
+        }
+
+        const holes = [];
+        zones.forEach((zone) => {
+            const rect = new OpenSeadragon.Rect(
+                Math.min(zone.ulx, zone.lrx),
+                Math.min(zone.uly, zone.lry),
+                Math.max(Math.abs(zone.lrx - zone.ulx), 1),
+                Math.max(Math.abs(zone.lry - zone.uly), 1)
+            );
+            const viewportRect = viewport.imageToViewportRectangle(rect);
+            const viewerRectCoords = viewport.viewportToViewerElementRectangle(viewportRect);
+            holes.push({
+                x: viewerRectCoords.x,
+                y: viewerRectCoords.y,
+                width: Math.max(viewerRectCoords.width, 1),
+                height: Math.max(viewerRectCoords.height, 1)
+            });
+        });
+
+        this.revealOverlay.style.display = 'block';
+        this.revealOverlay.innerHTML = this.buildMaskSvg(width, height, holes);
     }
 }
 
