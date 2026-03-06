@@ -58,7 +58,6 @@ class EdiromOpenseadragon extends HTMLElement {
     constructor() {
         super();
         this.attachShadow({ mode: 'open' });
-        console.log("Constructor called");
 
         /** @type {OpenSeadragon.Viewer} OpenSeadragon viewer instance */
         this.openSeaDragon = null;
@@ -74,7 +73,7 @@ class EdiromOpenseadragon extends HTMLElement {
      * @returns {Array<string>} The list of observed attributes.
      */
     static get observedAttributes() {
-        return ['preserveviewport', 'clicktozoom', 'visibilityratio', 'minzoomlevel', 'maxzoomlevel', 'shownavigationcontrol',  'sequencemode', 'shownavigator', 'showzoomcontrol', 'showhomecontrol', 'showfullpagecontrol', 'showsequencecontrol', 'tilesources', 'pagenumber', 'zoom', 'rotation', 'triggerhome', 'triggerfullscreen', 'openseadragon-options'];
+        return ['preserveviewport', 'clicktozoom', 'visibilityratio', 'minzoomlevel', 'maxzoomlevel', 'shownavigationcontrol',  'sequencemode', 'shownavigator', 'showzoomcontrol', 'showhomecontrol', 'showfullpagecontrol', 'showsequencecontrol', 'tilesources', 'pagenumber', 'zoom', 'rotation', 'triggernextpage', 'triggerpreviouspage', 'triggerfullscreen', 'openseadragon-options'];
     }
 
     /**
@@ -102,7 +101,11 @@ class EdiromOpenseadragon extends HTMLElement {
         
         // custom event for property update
         const event = new CustomEvent('communicate-' + property + '-update', {
-            detail: { [property]: newPropertyValue },
+            detail: {
+                element: this.tagName.toLowerCase(),
+                property: property,
+                value: newPropertyValue
+            },
             bubbles: true
         });
         this.dispatchEvent(event);
@@ -116,28 +119,52 @@ class EdiromOpenseadragon extends HTMLElement {
      * Loads the OpenSeadragon library and initializes the viewer container.
      */
     connectedCallback() {
-        console.log("Connected to DOM");
-        const osdScript = document.createElement('script');
-        osdScript.src = "https://cdnjs.cloudflare.com/ajax/libs/openseadragon/4.1.1/openseadragon.min.js";
-        osdScript.defer = true;
-        this.shadowRoot.appendChild(osdScript);
-       
-
+        
+        // Add host styles
+        const style = document.createElement('style');
+        style.textContent = `
+            :host {
+                display: block;
+                width: 100%;
+                height: 100%;
+            }
+        `;
+        this.shadowRoot.appendChild(style);
+        
+        // Load OpenSeadragon CSS into shadow DOM
+        const cssLink = document.createElement('link');
+        cssLink.rel = 'stylesheet';
+        cssLink.href = 'https://unpkg.com/openseadragon@4.1.1/build/openseadragon/openseadragon.min.css';
+        this.shadowRoot.appendChild(cssLink);
+        
         // Create a div for the OpenSeadragon viewer
         this.viewerDiv = document.createElement('div');
         this.viewerDiv.id = 'viewer';
         this.viewerDiv.style.width = '100%';
         this.viewerDiv.style.height = '100%';
+        this.viewerDiv.style.position = 'relative';
         this.shadowRoot.appendChild(this.viewerDiv);
         
-        
-        // Callback when the script is loaded
-        osdScript.onload = () => {
-            if (window.OpenSeadragon) {
-                this.set('tilesources', this.getAttribute('tilesources'));
-            }
+        // Load OpenSeadragon script to main document if not already loaded
+        if (!window.OpenSeadragon) {
+            const osdScript = document.createElement('script');
+            osdScript.src = "https://unpkg.com/openseadragon@4.1.1/build/openseadragon/openseadragon.min.js";
+            osdScript.defer = true;
+            document.head.appendChild(osdScript);
             
-        };
+            osdScript.onload = () => {
+                if (window.OpenSeadragon) {
+                    this.set('tilesources', this.getAttribute('tilesources'));
+                }
+            };
+            
+            osdScript.onerror = () => {
+                console.error("Failed to load OpenSeadragon script");
+            };
+        } else {
+            // OpenSeadragon already loaded
+            this.set('tilesources', this.getAttribute('tilesources'));
+        }
     }
 
     /**
@@ -166,8 +193,12 @@ class EdiromOpenseadragon extends HTMLElement {
                 this.setRotation(parseFloat(newPropertyValue));
                 break;
             
-            case 'triggerhome':
-                this.home();
+            case 'triggernextpage':
+                this.nextPage();
+                break;
+            
+            case 'triggerpreviouspage':
+                this.previousPage();
                 break;
             
             case 'triggerfullscreen':
@@ -217,48 +248,61 @@ class EdiromOpenseadragon extends HTMLElement {
      * For IIIF manifests, fetches and parses the manifest to extract image URLs.
      */
     displayOpenSeadragon() {
+        console.log('=== displayOpenSeadragon called ===');
+        console.log('tilesources:', this.tilesources);
+        console.log('OpenSeadragon available:', !!window.OpenSeadragon);
+        
         if (window.OpenSeadragon) {
 
             if(this.openSeaDragon) {
+                console.log('Destroying existing viewer');
                 this.openSeaDragon.destroy();
             }
 
-            const tileSources = JSON.parse(this.tilesources);
-            
-            // Check if it's a IIIF manifest URL (string ending with .json)
-            if (Array.isArray(tileSources) && tileSources.length === 1 && 
-                typeof tileSources[0] === 'string' && tileSources[0].includes('manifest')) {
+            try {
+                const tileSources = JSON.parse(this.tilesources);
+                console.log('Parsed tile sources:', tileSources);
                 
-                // Fetch and parse the IIIF manifest
-                fetch(tileSources[0])
-                    .then(response => response.json())
-                    .then(manifest => {
-                        const imageUrls = [];
-                        
-                        // Extract image info.json URLs from IIIF Presentation API manifest
-                        if (manifest.sequences && manifest.sequences[0] && manifest.sequences[0].canvases) {
-                            manifest.sequences[0].canvases.forEach(canvas => {
-                                if (canvas.images && canvas.images[0] && canvas.images[0].resource) {
-                                    const service = canvas.images[0].resource.service;
-                                    if (service) {
-                                        const serviceId = service['@id'] || service.id;
-                                        imageUrls.push(serviceId + '/info.json');
+                // Check if it's a IIIF manifest URL (string ending with .json)
+                if (Array.isArray(tileSources) && tileSources.length === 1 && 
+                    typeof tileSources[0] === 'string' && tileSources[0].includes('manifest')) {
+                    
+                    console.log('Loading IIIF manifest...');
+                    // Fetch and parse the IIIF manifest
+                    fetch(tileSources[0])
+                        .then(response => response.json())
+                        .then(manifest => {
+                            const imageUrls = [];
+                            
+                            // Extract image info.json URLs from IIIF Presentation API manifest
+                            if (manifest.sequences && manifest.sequences[0] && manifest.sequences[0].canvases) {
+                                manifest.sequences[0].canvases.forEach(canvas => {
+                                    if (canvas.images && canvas.images[0] && canvas.images[0].resource) {
+                                        const service = canvas.images[0].resource.service;
+                                        if (service) {
+                                            const serviceId = service['@id'] || service.id;
+                                            imageUrls.push(serviceId + '/info.json');
+                                        }
                                     }
-                                }
-                            });
-                        }
-                        
-                        // Initialize OpenSeadragon with extracted image URLs
-                        this.initializeViewer(imageUrls);
-                    })
-                    .catch(error => {
-                        console.error('Error loading IIIF manifest:', error);
-                        // Try to load as regular tile sources
-                        this.initializeViewer(tileSources);
-                    });
-            } else {
-                // Direct tile sources (not a manifest URL)
-                this.initializeViewer(tileSources);
+                                });
+                            }
+                            
+                            console.log('Extracted image URLs:', imageUrls);
+                            // Initialize OpenSeadragon with extracted image URLs
+                            this.initializeViewer(imageUrls);
+                        })
+                        .catch(error => {
+                            console.error('Error loading IIIF manifest:', error);
+                            // Try to load as regular tile sources
+                            this.initializeViewer(tileSources);
+                        });
+                } else {
+                    // Direct tile sources (not a manifest URL)
+                    console.log('Loading direct tile sources');
+                    this.initializeViewer(tileSources);
+                }
+            } catch (error) {
+                console.error('Error parsing tile sources:', error);
             }
         } else {
             console.error('OpenSeadragon library is not loaded.');
@@ -271,27 +315,42 @@ class EdiromOpenseadragon extends HTMLElement {
      * @param {Array} tileSources - Array of tile source URLs or objects.
      */
     initializeViewer(tileSources) {
-        this.openSeaDragon = OpenSeadragon({
-            element: this.shadowRoot.getElementById('viewer'),
-            preserveViewport: this.preserveviewport === 'true',
-            visibilityRatio: parseFloat(this.visibilityratio) || 1.0,
-            minZoomLevel: parseFloat(this.minzoomlevel) || 0.5,
-            defaultZoomLevel: parseFloat(this.defaultzoomlevel) || 1,
-            maxZoomLevel: parseFloat(this.maxzoomlevel) || 10,
-            showNavigationControl: this.shownavigationcontrol === 'true',
-            tileSources: tileSources,
-            showNavigator:  this.shownavigator === 'true',
-            showZoomControl:  this.showzoomcontrol === 'true',
-            showHomeControl:  this.showhomecontrol === 'true',
-            showFullPageControl:  this.showfullpagecontrol === 'true',
-            showSequenceControl:  this.showsequencecontrol === 'true',
-            sequenceMode: this.sequencemode === 'true',
-            gestureSettingsMouse: {
-              clickToZoom: this.clicktozoom === 'true',
-            },
-            // Merge additional options from openseadragon-options attribute
-            ...this.options
-        });
+        console.log('initializeViewer called with:', tileSources);
+        console.log('Viewer div:', this.viewerDiv);
+        console.log('OpenSeadragon available:', !!window.OpenSeadragon);
+        
+        if (!window.OpenSeadragon) {
+            console.error('OpenSeadragon library not available');
+            return;
+        }
+        
+        try {
+            this.openSeaDragon = OpenSeadragon({
+                element: this.viewerDiv,
+                prefixUrl: 'https://unpkg.com/openseadragon@4.1.1/build/openseadragon/images/',
+                preserveViewport: this.preserveviewport === 'true',
+                visibilityRatio: parseFloat(this.visibilityratio) || 1.0,
+                minZoomLevel: parseFloat(this.minzoomlevel) || 0.5,
+                defaultZoomLevel: parseFloat(this.defaultzoomlevel) || 1,
+                maxZoomLevel: parseFloat(this.maxzoomlevel) || 10,
+                showNavigationControl: this.shownavigationcontrol === 'true',
+                tileSources: tileSources,
+                showNavigator:  this.shownavigator === 'true',
+                showZoomControl:  this.showzoomcontrol === 'true',
+                showHomeControl:  this.showhomecontrol === 'true',
+                showFullPageControl:  this.showfullpagecontrol === 'true',
+                showSequenceControl:  this.showsequencecontrol === 'true',
+                sequenceMode: this.sequencemode === 'true',
+                gestureSettingsMouse: {
+                  clickToZoom: this.clicktozoom === 'true',
+                },
+                // Merge additional options from openseadragon-options attribute
+                ...this.options
+            });
+            console.log('OpenSeadragon viewer initialized successfully:', this.openSeaDragon);
+        } catch (error) {
+            console.error('Error initializing OpenSeadragon:', error);
+        }
     }
     
     /**
@@ -347,12 +406,15 @@ class EdiromOpenseadragon extends HTMLElement {
     
     goToPage(pageNumber) {
         if(this.openSeaDragon && !isNaN(pageNumber)) {
-            this.openSeaDragon.goToPage(pageNumber);
+            // Convert from 1-based (user) to 0-based (internal) indexing
+            const zeroBasedPage = parseInt(pageNumber) - 1;
+            this.openSeaDragon.goToPage(zeroBasedPage);
         }
     }
     
     getCurrentPage() {
-        return this.openSeaDragon ? this.openSeaDragon.currentPage() : 0;
+        // Return 1-based page number for user display
+        return this.openSeaDragon ? this.openSeaDragon.currentPage() + 1 : 1;
     }
     
     getTotalPages() {
@@ -362,7 +424,10 @@ class EdiromOpenseadragon extends HTMLElement {
     // Home/reset view
     home() {
         if(this.openSeaDragon) {
-            this.openSeaDragon.viewport.goHome(true);
+            console.log('Calling home()');
+            this.openSeaDragon.goHome();
+        } else {
+            console.error('OpenSeadragon viewer not initialized');
         }
     }
     

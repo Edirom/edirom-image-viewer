@@ -72,10 +72,17 @@ viewer.addEventListener('communicate-zoom-update', (event) => {
 
 _Note: All attribute values are strings. The data type information indicates the expected format._
 
+**Important Note on Page Numbering**: Page numbers are **1-based** for user-facing interactions. This means:
+- Page 1 = First image
+- Page 2 = Second image
+- And so on...
+
+This applies to `pagenumber` attribute and all page-related methods. The component automatically converts between 1-based (user) and 0-based (internal) indexing.
+
 | Attribute                | Type    | Description                                                                                                                                             | Default  |
 |--------------------------|---------|---------------------------------------------------------------------------------------------------------------------------------------------------------|----------|
 | `tilesources`            | string  | JSON array of IIIF manifest URLs or tile source URLs. Example: `'["https://example.com/manifest.json"]'` or `'["https://example.com/info.json"]'` | `""`     |
-| `pagenumber`             | number  | Current page number in a multi-image sequence (1-based).                                                                                                 | `1`      |
+| `pagenumber`             | number  | Current page number in a multi-image sequence (1-based, where 1 = first image).                                                                       | `1`      |
 | `zoom`                   | number  | Zoom level of the viewer.                                                                                                                                | `1`      |
 | `rotation`               | number  | Rotation angle in degrees (0-360).                                                                                                                       | `0`      |
 | `preserveviewport`       | boolean | Preserve viewport settings when navigating between pages.                                                                                                | `false`  |
@@ -90,8 +97,9 @@ _Note: All attribute values are strings. The data type information indicates the
 | `showhomecontrol`        | boolean | Show/hide the home/reset view button.                                                                                                                    | `true`   |
 | `showfullpagecontrol`    | boolean | Show/hide the fullscreen toggle button.                                                                                                                  | `true`   |
 | `showsequencecontrol`    | boolean | Show/hide previous/next page buttons (requires `sequencemode="true"`).                                                                                   | `true`   |
-| `triggerhome`            | string  | Trigger attribute to reset view to home position (set any value to trigger).                                                                             | `""`     |
-| `triggerfullscreen`      | string  | Trigger attribute to toggle fullscreen mode (set any value to trigger).                                                                                  | `""`     |
+| `triggernextpage`        | boolean | Trigger next page navigation (set to `"true"` to navigate to next page).                                                                                 | `"false"` |
+| `triggerpreviouspage`    | boolean | Trigger previous page navigation (set to `"true"` to navigate to previous page).                                                                        | `"false"` |
+| `triggerfullscreen`      | boolean | Trigger fullscreen mode toggle (set to `"true"` to toggle fullscreen).                                                                                   | `"false"` |
 | `openseadragon-options`  | string  | JSON object with additional OpenSeadragon configuration options. Example: `'{"gestureSettingsTouch": {"pinchRotate": true}}'`                          | `""`     |
 
 ## Public Methods
@@ -128,20 +136,46 @@ The component provides the following public methods:
 
 ```html
 <edirom-openseadragon 
-    tilesources='["https://iiif.example.com/manifest.json"]'>
+    tilesources='["https://example.com/iiif/manifest.json"]'>
 </edirom-openseadragon>
 ```
 
-### Multi-Page Sequence with Controls
+### Multi-Page Sequence with Controls and Trigger Attributes
 
 ```html
 <edirom-openseadragon 
-    tilesources='["https://example.com/page1.json", "https://example.com/page2.json"]'
+    id="viewer"
+    tilesources='["https://content.staatsbibliothek-berlin.de/dc/69007087X-0001/info.json", "https://content.staatsbibliothek-berlin.de/dc/69007087X-0002/info.json"]'
+    pagenumber="1"
+    zoom="1"
+    triggernextpage="false"
+    triggerpreviouspage="false"
+    triggerfullscreen="false"
     sequencemode="true"
     showsequencecontrol="true"
-    preserveviewport="true"
-    pagenumber="1">
+    preserveviewport="true">
 </edirom-openseadragon>
+```
+
+### Controlling via JavaScript and Triggers
+
+```javascript
+const viewer = document.querySelector('edirom-openseadragon');
+
+// Navigate to page 3
+viewer.setAttribute('pagenumber', '3');
+
+// Zoom to level 2
+viewer.setAttribute('zoom', '2');
+
+// Go to next page by triggering the attribute
+viewer.setAttribute('triggernextpage', 'true');
+
+// Go to previous page
+viewer.setAttribute('triggerpreviouspage', 'true');
+
+// Toggle fullscreen
+viewer.setAttribute('triggerfullscreen', 'true');
 ```
 
 ### Custom OpenSeadragon Configuration
@@ -160,6 +194,22 @@ The component supports both IIIF manifests and direct image tile sources:
 - **IIIF Manifests**: Automatically fetches and parses IIIF Presentation API manifests to extract image URLs
 - **Direct Tile Sources**: Use IIIF Image API info.json URLs directly
 
+## Trigger Attributes
+
+Trigger attributes are used to invoke actions on the viewer. Set these attributes to `"true"` to trigger the corresponding action:
+
+- **`triggernextpage`**: Navigate to the next page in a multi-image sequence
+- **`triggerpreviouspage`**: Navigate to the previous page in a multi-image sequence
+- **`triggerfullscreen`**: Toggle fullscreen mode on/off
+
+Example:
+```javascript
+const viewer = document.querySelector('edirom-openseadragon');
+viewer.setAttribute('triggernextpage', 'true');    // Go to next page
+viewer.setAttribute('triggerpreviouspage', 'true'); // Go to previous page
+viewer.setAttribute('triggerfullscreen', 'true');   // Toggle fullscreen
+```
+
 ## Events
 
 The component fires custom events when attributes change:
@@ -167,6 +217,9 @@ The component fires custom events when attributes change:
 - `communicate-zoom-update` - Fired when zoom level changes
 - `communicate-rotation-update` - Fired when rotation changes
 - `communicate-pagenumber-update` - Fired when page changes
+- `communicate-triggernextpage-update` - Fired when next page is triggered
+- `communicate-triggerpreviouspage-update` - Fired when previous page is triggered
+- `communicate-triggerfullscreen-update` - Fired when fullscreen is triggered
 - And more for each observable attribute
 
 ## Browser Support
