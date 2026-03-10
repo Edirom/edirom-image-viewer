@@ -1,471 +1,440 @@
 /**
- * Custom Web Component for viewing IIIF images using the OpenSeadragon viewer.
- * 
- * <edirom-openseadragon> provides an interface to load, view, and interact with IIIF images
- * using the OpenSeadragon JavaScript library. It supports dynamic attribute changes, zooming,
- * page navigation, rotation, and various viewer controls.
- * 
+ * EdiromOpenseadragon - Web component for displaying IIIF images using OpenSeadragon
  * @class
  * @extends HTMLElement
- * 
- * @example
- * <edirom-openseadragon tilesources='["manifest.json"]'></edirom-openseadragon>
- * 
- * @attribute {string} tilesources - JSON string array of IIIF manifest URLs or tile source objects.
- * @attribute {number} pagenumber - The current page/image number to display (for multi-image sequences).
- * @attribute {number} zoom - The zoom level for the viewer.
- * @attribute {number} rotation - The rotation angle in degrees (0-360).
- * @attribute {boolean} preserveviewport - Whether to preserve viewport when changing pages.
- * @attribute {boolean} clicktozoom - Enable/disable click-to-zoom functionality.
- * @attribute {number} visibilityratio - Ratio of image that must be visible (0.0-1.0).
- * @attribute {number} minzoomlevel - Minimum allowed zoom level.
- * @attribute {number} maxzoomlevel - Maximum allowed zoom level.
- * @attribute {boolean} shownavigationcontrol - Show/hide all navigation controls.
- * @attribute {boolean} sequencemode - Enable sequence mode for multiple images.
- * @attribute {boolean} shownavigator - Show/hide the navigator mini-map.
- * @attribute {boolean} showzoomcontrol - Show/hide zoom in/out buttons.
- * @attribute {boolean} showhomecontrol - Show/hide the home/reset button.
- * @attribute {boolean} showfullpagecontrol - Show/hide the fullscreen toggle button.
- * @attribute {boolean} showsequencecontrol - Show/hide previous/next page buttons.
- * @attribute {string} triggerhome - Trigger attribute to reset view to home position.
- * @attribute {string} triggerfullscreen - Trigger attribute to toggle fullscreen mode.
- * @attribute {object|string} openseadragon-options - Additional OpenSeadragon configuration options as JSON object.
- * 
- * @fires communicate-[property]-update - Fired when a property is updated via attribute change.
- * 
- * @method nextPage - Navigate to the next page in a sequence.
- * @method previousPage - Navigate to the previous page in a sequence.
- * @method goToPage - Navigate to a specific page number.
- * @method getCurrentPage - Get the current page number.
- * @method getTotalPages - Get the total number of pages.
- * @method zoomIn - Zoom in by 20%.
- * @method zoomOut - Zoom out by 20%.
- * @method setZoom - Set zoom to a specific level.
- * @method getZoom - Get the current zoom level.
- * @method home - Reset view to initial state.
- * @method setFullScreen - Set fullscreen mode on/off.
- * @method toggleFullScreen - Toggle fullscreen mode.
- * @method isFullScreen - Check if in fullscreen mode.
- * @method rotate - Rotate by specified degrees.
- * @method setRotation - Set rotation to specific angle.
- * @method getRotation - Get current rotation angle.
  */
 class EdiromOpenseadragon extends HTMLElement {
-    /**
-     * Creates an instance of EdiromOpenseadragon.
-     * @constructor
-     */
-    constructor() {
-        super();
-        this.attachShadow({ mode: 'open' });
+  constructor() {
+    super();
+    this.attachShadow({ mode: 'open' });
+    console.log("Constructor called");
+    this.currentPage = 1;
+    this.totalPages = 1;
+    this.tileSources = [];
+  }
 
-        /** @type {OpenSeadragon.Viewer} OpenSeadragon viewer instance */
-        this.openSeaDragon = null;
-        
-        /** @type {object} Additional OpenSeadragon options */
-        this.options = this.getAttribute('openseadragon-options') ? 
-            JSON.parse(this.getAttribute('openseadragon-options')) : {};
-    }
+  static get observedAttributes() {
+    return [
+      'tilesources', 'pagenumber', 'zoom', 'rotation', 'preserveviewport',
+      'clicktozoom', 'visibilityratio', 'minzoomlevel', 'maxzoomlevel',
+      'showcontrol', 'sequencemode', 'shownavigator',
+      'showzoomcontrol', 'showhomecontrol', 'showfullpagecontrol',
+      'showsequencecontrol', 'triggernextpage', 'triggerpreviouspage', 'triggerfullscreen'
+    ];
+  }
 
-    /**
-     * Returns the list of observed attributes for the EdiromOpenseadragon custom element.
-     * @static
-     * @returns {Array<string>} The list of observed attributes.
-     */
-    static get observedAttributes() {
-        return ['preserveviewport', 'clicktozoom', 'visibilityratio', 'minzoomlevel', 'maxzoomlevel', 'shownavigationcontrol',  'sequencemode', 'shownavigator', 'showzoomcontrol', 'showhomecontrol', 'showfullpagecontrol', 'showsequencecontrol', 'tilesources', 'pagenumber', 'zoom', 'rotation', 'triggernextpage', 'triggerpreviouspage', 'triggerfullscreen', 'openseadragon-options'];
-    }
-
-    /**
-     * Invoked when one of the custom element's attributes is added, removed, or changed.
-     * @param {string} property - The name of the attribute that was changed.
-     * @param {*} oldValue - The previous value of the attribute.
-     * @param {*} newValue - The new value of the attribute.
-     */
-    attributeChangedCallback(property, oldValue, newValue) {
-
-        // handle property change
-        this.set(property, newValue);
-
-    }
-
-    /**
-     * Sets the value of a global property and triggers property update events.
-     * @param {string} property - The name of the property to set.
-     * @param {*} newPropertyValue - The new value to set for the property.
-     */
-    set(property, newPropertyValue) {
-        
-        // set internal and html properties  
-        this[property] = newPropertyValue;
-        
-        // custom event for property update
-        const event = new CustomEvent('communicate-' + property + '-update', {
-            detail: {
-                element: this.tagName.toLowerCase(),
-                property: property,
-                value: newPropertyValue
-            },
-            bubbles: true
-        });
-        this.dispatchEvent(event);
-
-        // further handling of property change
-        this.handlePropertyChange(property, newPropertyValue);
-    }
-
-    /**
-     * Lifecycle callback invoked when the custom element is added to the DOM.
-     * Loads the OpenSeadragon library and initializes the viewer container.
-     */
-    connectedCallback() {
-        
-        // Add host styles
-        const style = document.createElement('style');
-        style.textContent = `
-            :host {
-                display: block;
-                width: 100%;
-                height: 100%;
-            }
-        `;
-        this.shadowRoot.appendChild(style);
-        
-        // Load OpenSeadragon CSS into shadow DOM
-        const cssLink = document.createElement('link');
-        cssLink.rel = 'stylesheet';
-        cssLink.href = 'https://unpkg.com/openseadragon@4.1.1/build/openseadragon/openseadragon.min.css';
-        this.shadowRoot.appendChild(cssLink);
-        
-        // Create a div for the OpenSeadragon viewer
-        this.viewerDiv = document.createElement('div');
-        this.viewerDiv.id = 'viewer';
-        this.viewerDiv.style.width = '100%';
-        this.viewerDiv.style.height = '100%';
-        this.viewerDiv.style.position = 'relative';
-        this.shadowRoot.appendChild(this.viewerDiv);
-        
-        // Load OpenSeadragon script to main document if not already loaded
-        if (!window.OpenSeadragon) {
-            const osdScript = document.createElement('script');
-            osdScript.src = "https://unpkg.com/openseadragon@4.1.1/build/openseadragon/openseadragon.min.js";
-            osdScript.defer = true;
-            document.head.appendChild(osdScript);
-            
-            osdScript.onload = () => {
-                if (window.OpenSeadragon) {
-                    this.set('tilesources', this.getAttribute('tilesources'));
-                }
-            };
-            
-            osdScript.onerror = () => {
-                console.error("Failed to load OpenSeadragon script");
-            };
-        } else {
-            // OpenSeadragon already loaded
-            this.set('tilesources', this.getAttribute('tilesources'));
-        }
-    }
-
-    /**
-     * Handles property changes for the OpenSeadragon viewer component.
-     * Routes property changes to appropriate handler methods or triggers viewer recreation.
-     * @param {string} property - The name of the property being changed.
-     * @param {any} newPropertyValue - The new value of the property.
-     */
-    handlePropertyChange(property, newPropertyValue) {
-        switch(property) {
-      
-            // handle tileSources property change
-            case 'tilesources':
-                this.displayOpenSeadragon();
-                break;
-            
-            case 'pagenumber':
-                this.goToPage(parseInt(newPropertyValue));
-                break;
-            
-            case 'zoom':
-                this.setZoom(parseFloat(newPropertyValue));
-                break;
-            
-            case 'rotation':
-                this.setRotation(parseFloat(newPropertyValue));
-                break;
-            
-            case 'triggernextpage':
-                this.nextPage();
-                break;
-            
-            case 'triggerpreviouspage':
-                this.previousPage();
-                break;
-            
-            case 'triggerfullscreen':
-                this.toggleFullScreen();
-                break;
-            
-            case 'openseadragon-options':
-                this.options = JSON.parse(newPropertyValue);
-                if(this.openSeaDragon) {
-                    this.displayOpenSeadragon();
-                }
-                break;
-
-            case 'preserveviewport':
-            case 'visibilityratio':
-            case 'minzoomlevel':
-            case 'maxzoomlevel':
-            case 'shownavigationcontrol':
-            case 'sequencemode':
-            case 'showfullpagecontrol':
-            case 'shownavigator':
-            case 'showzoomcontrol':
-            case 'showhomecontrol':
-            case 'showsequencecontrol':
-                // These control visibility properties require recreating the viewer
-                if(this.openSeaDragon) {
-                    this.displayOpenSeadragon();
-                }
-                break;
-            
-            case 'clicktozoom':
-                if(this.openSeaDragon) {
-                    this.openSeaDragon.gestureSettingsMouse.clickToZoom = newPropertyValue === 'true';
-                }
-                break;
-            // handle default
-            default:  
-              console.log("Invalid property: '"+property+"'");
-      
-        }
+  attributeChangedCallback(property, oldValue, newValue) {
+    console.log('attributeChangedCallback:', property, 'oldValue:', oldValue, 'newValue:', newValue);
     
-    }
+    // handle property change
+    this.set(property, newValue);
+  }
 
-    /**
-     * Initializes or reinitializes the OpenSeadragon viewer with current settings.
-     * Handles both IIIF manifest URLs and direct tile sources.
-     * For IIIF manifests, fetches and parses the manifest to extract image URLs.
-     */
-    displayOpenSeadragon() {
-        console.log('=== displayOpenSeadragon called ===');
-        console.log('tilesources:', this.tilesources);
-        console.log('OpenSeadragon available:', !!window.OpenSeadragon);
-        
-        if (window.OpenSeadragon) {
-
-            if(this.openSeaDragon) {
-                console.log('Destroying existing viewer');
-                this.openSeaDragon.destroy();
-            }
-
-            try {
-                const tileSources = JSON.parse(this.tilesources);
-                console.log('Parsed tile sources:', tileSources);
-                
-                // Check if it's a IIIF manifest URL (string ending with .json)
-                if (Array.isArray(tileSources) && tileSources.length === 1 && 
-                    typeof tileSources[0] === 'string' && tileSources[0].includes('manifest')) {
-                    
-                    console.log('Loading IIIF manifest...');
-                    // Fetch and parse the IIIF manifest
-                    fetch(tileSources[0])
-                        .then(response => response.json())
-                        .then(manifest => {
-                            const imageUrls = [];
-                            
-                            // Extract image info.json URLs from IIIF Presentation API manifest
-                            if (manifest.sequences && manifest.sequences[0] && manifest.sequences[0].canvases) {
-                                manifest.sequences[0].canvases.forEach(canvas => {
-                                    if (canvas.images && canvas.images[0] && canvas.images[0].resource) {
-                                        const service = canvas.images[0].resource.service;
-                                        if (service) {
-                                            const serviceId = service['@id'] || service.id;
-                                            imageUrls.push(serviceId + '/info.json');
-                                        }
-                                    }
-                                });
-                            }
-                            
-                            console.log('Extracted image URLs:', imageUrls);
-                            // Initialize OpenSeadragon with extracted image URLs
-                            this.initializeViewer(imageUrls);
-                        })
-                        .catch(error => {
-                            console.error('Error loading IIIF manifest:', error);
-                            // Try to load as regular tile sources
-                            this.initializeViewer(tileSources);
-                        });
-                } else {
-                    // Direct tile sources (not a manifest URL)
-                    console.log('Loading direct tile sources');
-                    this.initializeViewer(tileSources);
-                }
-            } catch (error) {
-                console.error('Error parsing tile sources:', error);
-            }
-        } else {
-            console.error('OpenSeadragon library is not loaded.');
-        }
-    }
+  set(property, newPropertyValue) {
+    // set internal and html properties  
+    this[property] = newPropertyValue;
     
-    /**
-     * Initializes the OpenSeadragon viewer with the provided tile sources.
-     * Creates a new viewer instance with all configured options.
-     * @param {Array} tileSources - Array of tile source URLs or objects.
-     */
-    initializeViewer(tileSources) {
-        console.log('initializeViewer called with:', tileSources);
-        console.log('Viewer div:', this.viewerDiv);
-        console.log('OpenSeadragon available:', !!window.OpenSeadragon);
-        
-        if (!window.OpenSeadragon) {
-            console.error('OpenSeadragon library not available');
-            return;
+    // Skip event dispatch for trigger attributes being reset to empty string
+    const skipEvent = (property === 'triggernextpage' || property === 'triggerpreviouspage') && newPropertyValue === '';
+    
+    if (!skipEvent) {
+      // custom event for property update
+      const event = new CustomEvent('communicate-' + property + '-update', {
+        detail: { [property]: newPropertyValue },
+        bubbles: true
+      });
+      this.dispatchEvent(event);
+    }
+
+    // further handling of property change
+    this.handlePropertyChange(property, newPropertyValue);
+  }
+
+  connectedCallback() {
+    console.log("Connected to DOM");
+    
+    // Setup container
+    this.shadowRoot.innerHTML = `
+      <style>
+        :host {
+          display: block;
+          width: 100%;
+          height: 100%;
         }
-        
+        #viewer {
+          width: 100%;
+          height: 100%;
+        }
+        #custom-fullscreen-btn {
+          position: absolute;
+          top: 40px;
+          right: 10px;
+          z-index: 100;
+          padding: 8px 12px;
+          background-color: rgba(0, 0, 0, 0.7);
+          color: white;
+          border: none;
+          border-radius: 4px;
+          cursor: pointer;
+          font-size: 14px;
+          display: none;
+        }
+        #custom-fullscreen-btn:hover {
+          background-color: rgba(0, 0, 0, 0.9);
+        }
+      </style>
+      <div id="viewer"></div>
+      <button id="custom-fullscreen-btn">Fullscreen</button>
+    `;
+    
+    // Setup fullscreen button handler
+    const fullscreenBtn = this.shadowRoot.getElementById('custom-fullscreen-btn');
+    fullscreenBtn.addEventListener('click', () => this.toggleFullscreen());
+    
+    // Listen for fullscreen changes with bound handler for cleanup
+    this.fullscreenChangeHandler = () => this.handleFullscreenChange();
+    document.addEventListener('fullscreenchange', this.fullscreenChangeHandler);
+    
+    // Load OpenSeadragon library
+    const osdScript = document.createElement('script');
+    osdScript.src = "https://cdn.jsdelivr.net/npm/openseadragon@4.1.1/build/openseadragon/openseadragon.min.js";
+    osdScript.defer = true;
+    this.shadowRoot.appendChild(osdScript);
+    
+    // Callback when the script is loaded
+    osdScript.onload = () => {
+      if (window.OpenSeadragon) {
+        this.set('tilesources', this.getAttribute('tilesources'));
+      }
+    };
+  }
+
+  handlePropertyChange(property, newPropertyValue) {
+    switch(property) {
+      // handle tileSources property change
+      case 'tilesources':
+        this.displayOpenSeadragon();
+        break;
+      case 'pagenumber':
+        this.handlePageNumberChange(newPropertyValue);
+        break;
+      case 'zoom':
+        if (this.openSeaDragon) {
+          this.openSeaDragon.viewport.zoomTo(parseFloat(newPropertyValue), null, true);
+        }
+        break;
+      case 'rotation':
+        if (this.openSeaDragon) {
+          this.openSeaDragon.viewport.setRotation(parseFloat(newPropertyValue));
+        }
+        break;
+      case 'clicktozoom':
+        if (this.openSeaDragon) {
+          this.openSeaDragon.gestureSettingsMouse.clickToZoom = newPropertyValue === 'true';
+        }
+        break;
+      case 'showfullpagecontrol':
+        // Rebuild viewer if fullpage control visibility changes
+        this.displayOpenSeadragon();
+        // Also manage custom fullscreen button
+        if (newPropertyValue === 'true') {
+          this.showFullscreenButton();
+        } else {
+          this.hideFullscreenButton();
+        }
+        break;
+      case 'showcontrol':
+        // Show/hide all controls
+        const showAllControls = newPropertyValue === 'true';
+        this.setAttribute('showzoomcontrol', showAllControls ? 'true' : 'false');
+        this.setAttribute('showhomecontrol', showAllControls ? 'true' : 'false');
+        this.setAttribute('showfullpagecontrol', showAllControls ? 'true' : 'false');
+        this.setAttribute('showsequencecontrol', showAllControls ? 'true' : 'false');
+        this.setAttribute('shownavigator', showAllControls ? 'true' : 'false');
+        break;
+      case 'shownavigationcontrol':
+        // Rebuild viewer if navigation control visibility changes
+        this.displayOpenSeadragon();
+        break;
+      case 'showhomecontrol':
+        // Rebuild viewer if home control visibility changes
+        this.displayOpenSeadragon();
+        break;
+      case 'shownavigator':
+        // Rebuild viewer if navigator visibility changes
+        this.displayOpenSeadragon();
+        break;
+      case 'showzoomcontrol':
+        // Rebuild viewer if zoom control visibility changes
+        this.displayOpenSeadragon();
+        break;
+      case 'showsequencecontrol':
+        // Rebuild viewer if sequence control visibility changes
+        this.displayOpenSeadragon();
+        break;
+      case 'sequencemode':
+        // Rebuild viewer if sequence mode changes
+        this.displayOpenSeadragon();
+        break;
+      case 'triggernextpage':
+        console.log('triggernextpage handler called with value:', newPropertyValue);
+        // Handle both string 'true' and boolean values
+        if (newPropertyValue === 'true' || newPropertyValue === true) {
+          console.log('Calling nextPage(), currentPage:', this.currentPage, 'totalPages:', this.totalPages);
+          this.nextPage();
+        }
+        // Always reset trigger after processing so it can be used again
+        if (newPropertyValue !== '') {
+          setTimeout(() => this.setAttribute('triggernextpage', ''), 0);
+        }
+        break;
+      case 'triggerpreviouspage':
+        console.log('triggerpreviouspage handler called with value:', newPropertyValue);
+        // Handle both string 'true' and boolean values
+        if (newPropertyValue === 'true' || newPropertyValue === true) {
+          console.log('Calling previousPage(), currentPage:', this.currentPage, 'totalPages:', this.totalPages);
+          this.previousPage();
+        }
+        // Always reset trigger after processing so it can be used again
+        if (newPropertyValue !== '') {
+          setTimeout(() => this.setAttribute('triggerpreviouspage', ''), 0);
+        }
+        break;
+      case 'triggerfullscreen':
+        console.log('triggerfullscreen handler called with value:', newPropertyValue);
+        // Handle both string 'true' and boolean values
+        if (newPropertyValue === 'true' || newPropertyValue === true) {
+          console.log('Toggling fullscreen');
+          this.toggleFullscreen();
+        }
+        // Always reset trigger after processing so it can be used again
+        if (newPropertyValue !== '') {
+          setTimeout(() => this.setAttribute('triggerfullscreen', ''), 0);
+        }
+        break;
+      default:
+        console.log("Property: '" + property + "' = '" + newPropertyValue + "'");
+    }
+  }
+
+  handlePageNumberChange(value) {
+    const pageNum = parseInt(value) - 1;
+    if (pageNum >= 0 && pageNum < this.tileSources.length) {
+      this.currentPage = pageNum + 1;
+      this.previousZoom = undefined; // Reset zoom tracking when changing pages
+      if (this.openSeaDragon) {
+        this.openSeaDragon.goToPage(pageNum);
+      }
+    }
+  }
+
+  displayOpenSeadragon() {
+    if (window.OpenSeadragon) {
+      if (this.tilesources) {
         try {
-            this.openSeaDragon = OpenSeadragon({
-                element: this.viewerDiv,
-                prefixUrl: 'https://unpkg.com/openseadragon@4.1.1/build/openseadragon/images/',
-                preserveViewport: this.preserveviewport === 'true',
-                visibilityRatio: parseFloat(this.visibilityratio) || 1.0,
-                minZoomLevel: parseFloat(this.minzoomlevel) || 0.5,
-                defaultZoomLevel: parseFloat(this.defaultzoomlevel) || 1,
-                maxZoomLevel: parseFloat(this.maxzoomlevel) || 10,
-                showNavigationControl: this.shownavigationcontrol === 'true',
-                tileSources: tileSources,
-                showNavigator:  this.shownavigator === 'true',
-                showZoomControl:  this.showzoomcontrol === 'true',
-                showHomeControl:  this.showhomecontrol === 'true',
-                showFullPageControl:  this.showfullpagecontrol === 'true',
-                showSequenceControl:  this.showsequencecontrol === 'true',
-                sequenceMode: this.sequencemode === 'true',
-                gestureSettingsMouse: {
-                  clickToZoom: this.clicktozoom === 'true',
-                },
-                // Merge additional options from openseadragon-options attribute
-                ...this.options
-            });
-            console.log('OpenSeadragon viewer initialized successfully:', this.openSeaDragon);
-        } catch (error) {
-            console.error('Error initializing OpenSeadragon:', error);
+          this.tileSources = JSON.parse(this.tilesources);
+          this.totalPages = this.tileSources.length;
+        } catch (e) {
+          console.error('Invalid tilesources JSON:', e);
+          return;
         }
-    }
-    
-    /**
-     * Public API Methods
-     */
-    
-    /**
-     * Zooms in by increasing the current zoom level by 20%.
-     */
-    zoomIn() {
-        if(this.openSeaDragon) {
-            const currentZoom = this.openSeaDragon.viewport.getZoom();
-            this.openSeaDragon.viewport.zoomTo(currentZoom * 1.2);
+      }
+
+      if (this.tileSources.length === 0) return;
+
+      if (this.openSeaDragon) {
+        this.openSeaDragon.destroy();
+      }
+
+      this.openSeaDragon = OpenSeadragon({
+        element: this.shadowRoot.getElementById('viewer'),
+        preserveViewport: this.preserveviewport === 'true',
+        visibilityRatio: parseFloat(this.visibilityratio || '1'),
+        minZoomLevel: parseFloat(this.minzoomlevel || '0.5'),
+        maxZoomLevel: parseFloat(this.maxzoomlevel || '10'),
+        prefixUrl: 'https://cdn.jsdelivr.net/npm/openseadragon@4.1.1/build/openseadragon/images/',
+        showNavigationControl: this.showcontrol === 'true',
+        tileSources: this.tileSources,
+        sequenceMode: this.sequencemode === 'true',
+        initialPage: Math.max(0, this.currentPage - 1),
+        showNavigator: this.shownavigator === 'true',
+        showZoomControl: this.showzoomcontrol === 'true',
+        showHomeControl: this.showhomecontrol === 'true',
+        showFullPageControl: this.showfullpagecontrol === 'true',
+        showSequenceControl: this.showsequencecontrol === 'true',
+        gestureSettingsMouse: {
+          clickToZoom: this.clicktozoom === 'true'
         }
-    }
-    
-    /**
-     * Zooms out by decreasing the current zoom level by 20%.
-     */
-    zoomOut() {
-        if(this.openSeaDragon) {
-            const currentZoom = this.openSeaDragon.viewport.getZoom();
-            this.openSeaDragon.viewport.zoomTo(currentZoom / 1.2);
+      });
+
+      // Override OpenSeadragon's setFullScreen to use custom fullscreen logic
+      const originalSetFullScreen = this.openSeaDragon.setFullScreen.bind(this.openSeaDragon);
+      this.openSeaDragon.setFullScreen = (fullScreen) => {
+        // Use custom fullscreen logic instead of OSD's buggy implementation
+        this.toggleFullscreen();
+      };
+
+      // Clear any existing zoom handlers before adding new one
+      if (this.zoomHandlerRef) {
+        this.openSeaDragon.removeHandler('zoom', this.zoomHandlerRef);
+      }
+
+      // Setup event handlers - only fire event once per significant zoom change
+      this.zoomHandlerRef = () => {
+        const currentZoom = this.openSeaDragon.viewport.getZoom();
+        
+        // Only dispatch zoom updates when zoom level has actually changed by threshold
+        if (!this.lastDispatchedZoom || Math.abs(currentZoom - this.lastDispatchedZoom) > 0.01) {
+          this.lastDispatchedZoom = currentZoom;
+          
+          this.dispatchEvent(new CustomEvent('communicate-zoom-update', {
+            detail: { zoom: currentZoom },
+            bubbles: true
+          }, { once: true }));
         }
+        
+        this.previousZoom = currentZoom;
+      };
+
+      this.openSeaDragon.addHandler('zoom', this.zoomHandlerRef);
+    } else {
+      console.error('OpenSeadragon library is not loaded.');
     }
-    
-    /**
-     * Sets the zoom level to a specific value.
-     * @param {number} zoomLevel - The desired zoom level.
-     */
-    setZoom(zoomLevel) {
-        if(this.openSeaDragon && !isNaN(zoomLevel)) {
-            this.openSeaDragon.viewport.zoomTo(zoomLevel);
-        }
+  }
+
+  nextPage() {
+    if (this.currentPage < this.totalPages) {
+      this.setAttribute('pagenumber', (this.currentPage + 1).toString());
     }
-    
-    getZoom() {
-        return this.openSeaDragon ? this.openSeaDragon.viewport.getZoom() : 0;
+  }
+
+  previousPage() {
+    if (this.currentPage > 1) {
+      this.setAttribute('pagenumber', (this.currentPage - 1).toString());
     }
-    
-    // Page navigation methods
-    nextPage() {
-        if(this.openSeaDragon) {
-            this.openSeaDragon.goToNextPage();
-        }
+  }
+
+  goToPage(pageNumber) {
+    if (pageNumber >= 1 && pageNumber <= this.totalPages) {
+      this.setAttribute('pagenumber', pageNumber.toString());
     }
-    
-    previousPage() {
-        if(this.openSeaDragon) {
-            this.openSeaDragon.goToPreviousPage();
-        }
+  }
+
+  getCurrentPage() {
+    return this.currentPage;
+  }
+
+  // Helper method to listen for events that fire once
+  onceDataOut(eventType, callback) {
+    this.addEventListener(`communicate-${eventType}-update`, callback, { once: true });
+  }
+
+  // Helper method to listen for events
+  onDataOut(eventType, callback) {
+    this.addEventListener(`communicate-${eventType}-update`, callback);
+  }
+
+  // Remove a data-out event listener
+  offDataOut(eventType, callback) {
+    this.removeEventListener(`communicate-${eventType}-update`, callback);
+  }
+
+  getTotalPages() {
+    return this.totalPages;
+  }
+
+  zoomIn() {
+    if (this.openSeaDragon) {
+      const currentZoom = this.openSeaDragon.viewport.getZoom();
+      this.openSeaDragon.viewport.zoomTo(currentZoom * 1.2, null, true);
     }
-    
-    goToPage(pageNumber) {
-        if(this.openSeaDragon && !isNaN(pageNumber)) {
-            // Convert from 1-based (user) to 0-based (internal) indexing
-            const zeroBasedPage = parseInt(pageNumber) - 1;
-            this.openSeaDragon.goToPage(zeroBasedPage);
-        }
+  }
+
+  zoomOut() {
+    if (this.openSeaDragon) {
+      const currentZoom = this.openSeaDragon.viewport.getZoom();
+      this.openSeaDragon.viewport.zoomTo(currentZoom / 1.2, null, true);
     }
-    
-    getCurrentPage() {
-        // Return 1-based page number for user display
-        return this.openSeaDragon ? this.openSeaDragon.currentPage() + 1 : 1;
+  }
+
+  setZoom(level) {
+    if (this.openSeaDragon) {
+      this.openSeaDragon.viewport.zoomTo(level, null, true);
     }
-    
-    getTotalPages() {
-        return this.openSeaDragon ? this.openSeaDragon.world.getItemCount() : 0;
+  }
+
+  getZoom() {
+    return this.openSeaDragon ? this.openSeaDragon.viewport.getZoom() : 1;
+  }
+
+  home() {
+    if (this.openSeaDragon) {
+      this.openSeaDragon.viewport.goHome(true);
     }
-    
-    // Home/reset view
-    home() {
-        if(this.openSeaDragon) {
-            console.log('Calling home()');
-            this.openSeaDragon.goHome();
-        } else {
-            console.error('OpenSeadragon viewer not initialized');
-        }
+  }
+
+  rotate(degrees) {
+    if (this.openSeaDragon) {
+      const currentRotation = this.openSeaDragon.viewport.getRotation();
+      this.openSeaDragon.viewport.setRotation(currentRotation + degrees);
     }
-    
-    // Full screen methods
-    setFullScreen(fullScreen) {
-        if(this.openSeaDragon) {
-            this.openSeaDragon.setFullScreen(fullScreen);
-        }
+  }
+
+  setRotation(degrees) {
+    if (this.openSeaDragon) {
+      this.openSeaDragon.viewport.setRotation(degrees);
     }
-    
-    toggleFullScreen() {
-        if(this.openSeaDragon) {
-            this.openSeaDragon.setFullScreen(!this.openSeaDragon.isFullPage());
-        }
+  }
+
+  getRotation() {
+    return this.openSeaDragon ? this.openSeaDragon.viewport.getRotation() : 0;
+  }
+
+  toggleFullscreen() {
+    const elem = this.shadowRoot.getElementById('viewer')?.parentElement || this;
+    if (!document.fullscreenElement) {
+      elem.requestFullscreen?.().catch(err => {
+        console.error('Fullscreen request failed:', err);
+      });
+    } else {
+      document.exitFullscreen?.().catch(err => {
+        console.error('Exit fullscreen failed:', err);
+      });
     }
-    
-    isFullScreen() {
-        return this.openSeaDragon ? this.openSeaDragon.isFullPage() : false;
+  }
+
+  handleFullscreenChange() {
+    if (this.openSeaDragon) {
+      // Give browser a moment to recalculate layout
+      setTimeout(() => {
+        this.openSeaDragon.forceResize();
+        this.openSeaDragon.viewport.goHome(true);
+      }, 100);
     }
-    
-    // Rotation methods
-    rotate(degrees) {
-        if(this.openSeaDragon && !isNaN(degrees)) {
-            this.openSeaDragon.viewport.setRotation(
-                this.openSeaDragon.viewport.getRotation() + degrees
-            );
-        }
+  }
+
+  showFullscreenButton() {
+    const btn = this.shadowRoot?.getElementById('custom-fullscreen-btn');
+    if (btn) btn.style.display = 'block';
+  }
+
+  hideFullscreenButton() {
+    const btn = this.shadowRoot?.getElementById('custom-fullscreen-btn');
+    if (btn) btn.style.display = 'none';
+  }
+
+  disconnectedCallback() {
+    if (this.fullscreenChangeHandler) {
+      document.removeEventListener('fullscreenchange', this.fullscreenChangeHandler);
     }
-    
-    setRotation(degrees) {
-        if(this.openSeaDragon && !isNaN(degrees)) {
-            this.openSeaDragon.viewport.setRotation(degrees);
-        }
+    if (this.openSeaDragon) {
+      if (this.zoomHandlerRef) {
+        this.openSeaDragon.removeHandler('zoom', this.zoomHandlerRef);
+      }
+      this.openSeaDragon.destroy();
+      this.openSeaDragon = null;
     }
-    
-    getRotation() {
-        return this.openSeaDragon ? this.openSeaDragon.viewport.getRotation() : 0;
-    }
+  }
 }
 
 customElements.define('edirom-openseadragon', EdiromOpenseadragon);
