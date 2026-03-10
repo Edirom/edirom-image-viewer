@@ -41,7 +41,6 @@ Include the custom element in your HTML `<body>`:
 ```html
 <edirom-openseadragon 
     tilesources='["https://example.com/iiif/manifest.json"]'
-    shownavigator="true"
     showzoomcontrol="true"
     sequencemode="true">
 </edirom-openseadragon>
@@ -90,7 +89,7 @@ This applies to `pagenumber` attribute and all page-related methods. The compone
 | `visibilityratio`        | number  | Ratio of image that must remain visible (0.0-1.0).                                                                                                       | `1.0`    |
 | `minzoomlevel`           | number  | Minimum allowed zoom level.                                                                                                                              | `0.5`    |
 | `maxzoomlevel`           | number  | Maximum allowed zoom level.                                                                                                                              | `10`     |
-| `shownavigationcontrol`  | boolean | Show/hide all navigation controls.                                                                                                                       | `true`   |
+| `showcontrol`            | boolean | Show/hide all controls (zoom, home, fullscreen, sequence controls, navigator).                                                                           | `true`   |
 | `sequencemode`           | boolean | Enable sequence mode for multi-image navigation.                                                                                                         | `false`  |
 | `shownavigator`          | boolean | Show/hide the navigator mini-map.                                                                                                                        | `true`   |
 | `showzoomcontrol`        | boolean | Show/hide zoom in/out buttons.                                                                                                                           | `true`   |
@@ -145,15 +144,22 @@ The component provides the following public methods:
 ```html
 <edirom-openseadragon 
     id="viewer"
-    tilesources='["https://content.staatsbibliothek-berlin.de/dc/69007087X-0001/info.json", "https://content.staatsbibliothek-berlin.de/dc/69007087X-0002/info.json"]'
     pagenumber="1"
     zoom="1"
-    triggernextpage="false"
-    triggerpreviouspage="false"
     triggerfullscreen="false"
+    showcontrol="true"
     sequencemode="true"
+    clicktozoom="false"
+    shownavigator="true"
+    showzoomcontrol="true" 
+    showhomecontrol="true" 
+    showfullpagecontrol="true" 
     showsequencecontrol="true"
-    preserveviewport="true">
+    preserveviewport="false"
+    visibilityratio="1"
+    minzoomlevel="0.5"
+    maxzoomlevel="10"
+    tilesources='["https://content.staatsbibliothek-berlin.de/dc/69007087X-0001/info.json", "https://content.staatsbibliothek-berlin.de/dc/69007087X-0002/info.json"]'>
 </edirom-openseadragon>
 ```
 
