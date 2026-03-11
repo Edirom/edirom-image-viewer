@@ -41,6 +41,7 @@ Include the custom element in your HTML `<body>`:
 ```html
 <edirom-openseadragon 
     tilesources='["https://example.com/iiif/manifest.json"]'
+    shownavigator="true"
     showzoomcontrol="true"
     sequencemode="true">
 </edirom-openseadragon>
@@ -84,22 +85,17 @@ This applies to `pagenumber` attribute and all page-related methods. The compone
 | `pagenumber`             | number  | Current page number in a multi-image sequence (1-based, where 1 = first image).                                                                       | `1`      |
 | `zoom`                   | number  | Zoom level of the viewer.                                                                                                                                | `1`      |
 | `rotation`               | number  | Rotation angle in degrees (0-360).                                                                                                                       | `0`      |
-| `preserveviewport`       | boolean | Preserve viewport settings when navigating between pages.                                                                                                | `false`  |
 | `clicktozoom`            | boolean | Enable click-to-zoom functionality.                                                                                                                      | `true`   |
-| `visibilityratio`        | number  | Ratio of image that must remain visible (0.0-1.0).                                                                                                       | `1.0`    |
-| `minzoomlevel`           | number  | Minimum allowed zoom level.                                                                                                                              | `0.5`    |
-| `maxzoomlevel`           | number  | Maximum allowed zoom level.                                                                                                                              | `10`     |
-| `showcontrol`            | boolean | Show/hide all controls (zoom, home, fullscreen, sequence controls, navigator).                                                                           | `true`   |
+| `shownavigationcontrol`  | boolean | Show/hide all navigation controls.                                                                                                                       | `true`   |
 | `sequencemode`           | boolean | Enable sequence mode for multi-image navigation.                                                                                                         | `false`  |
 | `shownavigator`          | boolean | Show/hide the navigator mini-map.                                                                                                                        | `true`   |
 | `showzoomcontrol`        | boolean | Show/hide zoom in/out buttons.                                                                                                                           | `true`   |
 | `showhomecontrol`        | boolean | Show/hide the home/reset view button.                                                                                                                    | `true`   |
 | `showfullpagecontrol`    | boolean | Show/hide the fullscreen toggle button.                                                                                                                  | `true`   |
 | `showsequencecontrol`    | boolean | Show/hide previous/next page buttons (requires `sequencemode="true"`).                                                                                   | `true`   |
-| `triggernextpage`        | boolean | Trigger next page navigation (set to `"true"` to navigate to next page).                                                                                 | `"false"` |
-| `triggerpreviouspage`    | boolean | Trigger previous page navigation (set to `"true"` to navigate to previous page).                                                                        | `"false"` |
+| `triggerhome`            | boolean | Trigger home position reset (set to `"true"` to reset view to initial state).                                                                            | `"false"` |
 | `triggerfullscreen`      | boolean | Trigger fullscreen mode toggle (set to `"true"` to toggle fullscreen).                                                                                   | `"false"` |
-| `openseadragon-options`  | string  | JSON object with additional OpenSeadragon configuration options. Example: `'{"gestureSettingsTouch": {"pinchRotate": true}}'`                          | `""`     |
+| `openseadragon-options`  | string  | JSON object with additional OpenSeadragon configuration options. Example: `'{"animationTime": 0.5, "zoomPerScroll": 1.2}'`                             | `""`     |
 
 ## Public Methods
 
@@ -144,22 +140,18 @@ The component provides the following public methods:
 ```html
 <edirom-openseadragon 
     id="viewer"
+    tilesources='["https://content.staatsbibliothek-berlin.de/dc/69007087X-0001/info.json", "https://content.staatsbibliothek-berlin.de/dc/69007087X-0002/info.json"]'
     pagenumber="1"
     zoom="1"
+    rotation="0"
+    triggerhome="false"
     triggerfullscreen="false"
-    showcontrol="true"
     sequencemode="true"
-    clicktozoom="false"
-    shownavigator="true"
-    showzoomcontrol="true" 
-    showhomecontrol="true" 
-    showfullpagecontrol="true" 
     showsequencecontrol="true"
-    preserveviewport="false"
-    visibilityratio="1"
-    minzoomlevel="0.5"
-    maxzoomlevel="10"
-    tilesources='["https://content.staatsbibliothek-berlin.de/dc/69007087X-0001/info.json", "https://content.staatsbibliothek-berlin.de/dc/69007087X-0002/info.json"]'>
+    shownavigator="true"
+    showzoomcontrol="true"
+    showhomecontrol="true"
+    showfullpagecontrol="true">
 </edirom-openseadragon>
 ```
 
@@ -174,11 +166,8 @@ viewer.setAttribute('pagenumber', '3');
 // Zoom to level 2
 viewer.setAttribute('zoom', '2');
 
-// Go to next page by triggering the attribute
-viewer.setAttribute('triggernextpage', 'true');
-
-// Go to previous page
-viewer.setAttribute('triggerpreviouspage', 'true');
+// Reset to home position
+viewer.setAttribute('triggerhome', 'true');
 
 // Toggle fullscreen
 viewer.setAttribute('triggerfullscreen', 'true');
@@ -186,12 +175,11 @@ viewer.setAttribute('triggerfullscreen', 'true');
 
 ### Custom OpenSeadragon Configuration
 
-```html
+<!-- Example: Disable sequence mode via options -->
 <edirom-openseadragon 
-    tilesources='["https://example.com/image/info.json"]'
-    openseadragon-options='{"gestureSettingsTouch": {"pinchRotate": true}, "animationTime": 0.5}'>
+    openseadragon-options='{"sequenceMode": false}'>
 </edirom-openseadragon>
-```
+
 
 ## IIIF Support
 
@@ -204,16 +192,14 @@ The component supports both IIIF manifests and direct image tile sources:
 
 Trigger attributes are used to invoke actions on the viewer. Set these attributes to `"true"` to trigger the corresponding action:
 
-- **`triggernextpage`**: Navigate to the next page in a multi-image sequence
-- **`triggerpreviouspage`**: Navigate to the previous page in a multi-image sequence
+- **`triggerhome`**: Reset view to initial/home position
 - **`triggerfullscreen`**: Toggle fullscreen mode on/off
 
 Example:
 ```javascript
 const viewer = document.querySelector('edirom-openseadragon');
-viewer.setAttribute('triggernextpage', 'true');    // Go to next page
-viewer.setAttribute('triggerpreviouspage', 'true'); // Go to previous page
-viewer.setAttribute('triggerfullscreen', 'true');   // Toggle fullscreen
+viewer.setAttribute('triggerhome', 'true');      // Reset to home position
+viewer.setAttribute('triggerfullscreen', 'true'); // Toggle fullscreen
 ```
 
 ## Events
@@ -223,15 +209,13 @@ The component fires custom events when attributes change:
 - `communicate-zoom-update` - Fired when zoom level changes
 - `communicate-rotation-update` - Fired when rotation changes
 - `communicate-pagenumber-update` - Fired when page changes
-- `communicate-triggernextpage-update` - Fired when next page is triggered
-- `communicate-triggerpreviouspage-update` - Fired when previous page is triggered
+- `communicate-triggerhome-update` - Fired when home is triggered
 - `communicate-triggerfullscreen-update` - Fired when fullscreen is triggered
 - And more for each observable attribute
 
 ## Browser Support
 
 The component uses modern web standards (Custom Elements, Shadow DOM) and requires a modern browser with ES6+ support
-
 
 
 
