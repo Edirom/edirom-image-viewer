@@ -2,45 +2,220 @@
 
 # Edirom Image Viewer Component
 
-This web component displays IIIF tile sources using openseadragon library. It is intended to be used in tbe Edirom Online, but can also be (re-)used in other web applications. No compilation or building is necessary to use the web component. 
-The component uses (https://openseadragon.github.io) library. 
-Note: This repository only contains the bare JavaScript-based component, there is a separate [demo suite](https://github.com/Edirom/edirom-web-components-demonstrator) for web components developed in the Edirom Online Reloaded project, where the component can be seen and tested.
+This web component displays IIIF images using the [OpenSeadragon](https://openseadragon.github.io) library. It is intended to be used in the Edirom Online, but can also be (re-)used in other web applications. No compilation or building is necessary to use the web component.
 
+**Note:** This repository only contains the bare JavaScript-based component. There is a separate [demo suite](https://github.com/Edirom/edirom-web-components-demonstrator) for web components developed in the Edirom Online Reloaded project, where the component can be seen and tested.
+
+## Features
+
+- **IIIF Support**: Load IIIF manifests or direct tile sources
+- **Image Navigation**: Navigate through multi-page image sequences
+- **Zoom & Pan**: Interactive zoom and pan controls
+- **Rotation**: Rotate images to any angle
+- **Customizable Controls**: Show/hide navigator, zoom buttons, home button, fullscreen toggle
+- **Attribute-Driven**: All interactions through standard HTML attributes
+- **Custom Configuration**: Pass advanced OpenSeadragon options via JSON
+- **Event Communication**: Custom events for state changes
 
 ## License
 
-The edirom-image-viewer.js comes with the license MIT. 
+The `edirom-image-viewer.js` comes with the MIT license.
 
-The imported Openseadragon library comes with the license BSD-3-Clause license.
+The imported OpenSeadragon library comes with the BSD-3-Clause license.
 
+## How to Use This Web Component
 
-## How to use this web component
+### 1. Include the Component
 
-1. Clone the repository into a directory of your choice
-2. Include the path to the web component's JavaScript file into the `<head>` an HTML page
+Add the web component script to your HTML page's `<head>`:
+
 ```html
+<script src="https://cdn.jsdelivr.net/npm/openseadragon@4.1.1/build/openseadragon/openseadragon.min.js"></script>
 <script src="path/to/edirom-image-viewer.js"></script>
 ```
-3. Include a custom element (this is specified and can be processed by the component) into the `<body>` of the HTML page. The attributes of the custom element are used as parameters at initialization of the component and changing them (manually or programmatically) can control the components state and behaviour during runtime. The state changes of the web component are communicated outwards via custom events (called 'communicate-{change-type}-update'). The component/document that instantiates the web component (its parent) can listen (via event listeners which have to be implemented individually) and react to the communicated state changes if necessary. The separation of inward communication (via custom element's attributes) and outward communication (via custom events) is esp. necessary to handle frequently populated information etween reading and writing info about the component's state. The component should be encapsulated into an html element such as a div. 
+
+### 2. Add the Custom Element
+
+Include the custom element in your HTML `<body>`:
+
 ```html
-<edirom-openseadragon preserveviewport='' visibilityratio='' minzoomLevel='' maxzoomLevel='' shownavigationcontrol='' sequencemode='' tileSources=''></edirom-openseadragon>
+<edirom-openseadragon 
+    tilesources='["https://example.com/iiif/manifest.json"]'
+    shownavigator="true"
+    showzoomcontrol="true"
+    sequencemode="true">
+</edirom-openseadragon>
 ```
 
-### Parameters
+### 3. Interact via Attributes
 
-_Note: All attribute values are strings internally, the data type information below indicates the necessary format of the attribute value._
+Control the component by setting attributes programmatically:
 
-The Openseadrgon parameters mentioned below are based on the available [Openseadragon library](https://openseadragon.github.io/docs/).  This list below is can be extended to add additonal Openseadragon parameters. 
-| Parameter              | Data type | Description                                                                                                                                             | Default  |
-|------------------------|------------|---------------------------------------------------------------------------------------------------------------------------------------------------------|----------|
-| preserveviewport       | string     | Preserves the viewport settings when navigating between pages.                                                                                           | "false"  |
-| visibilityratio        | string     | Sets the visibility ratio of the rendered SVG.                                                                                                           | "1.0"    |
-| minzoomLevel           | integer    | The minimum zoom level for the rendered SVG.                                                                                                             | "1"      |
-| maxzoomLevel           | integer    | The maximum zoom level for the rendered SVG.                                                                                                             | "10"     |
-| shownavigationcontrol  | string     | Controls the visibility of the navigation controls.                                                                                                      | "true"   |
-| sequencemode           | string     | Sets the mode for sequence navigation (e.g., 'continuous', 'discrete').                                                                                  | "false"  |
-| tilesources            | string     | URL or array of URLs for the source tiles used in rendering the SVG. e.g., `tilesources='["https://libimages1.princeton.edu/loris/pudl0001%2F4609321%2Fs42%2F00000001.jp2/info.json", "https://libimages1.princeton.edu/loris/pudl0001%2F4609321%2Fs42%2F00000002.jp2/info.json"...]'` | ""       |
+```javascript
+const viewer = document.querySelector('edirom-openseadragon');
+viewer.setAttribute('zoom', '2.5');
+viewer.setAttribute('rotation', '90');
+viewer.setAttribute('pagenumber', '5');
+```
 
+### 4. Listen to Events
+
+The component fires custom events when state changes:
+
+```javascript
+viewer.addEventListener('communicate-zoom-update', (event) => {
+    console.log('Zoom changed:', event.detail);
+});
+```
+
+## Attributes
+
+_Note: All attribute values are strings. The data type information indicates the expected format._
+
+**Important Note on Page Numbering**: Page numbers are **1-based** for user-facing interactions. This means:
+- Page 1 = First image
+- Page 2 = Second image
+- And so on...
+
+This applies to `pagenumber` attribute and all page-related methods. The component automatically converts between 1-based (user) and 0-based (internal) indexing.
+
+| Attribute                | Type    | Description                                                                                                                                             | Default  |
+|--------------------------|---------|---------------------------------------------------------------------------------------------------------------------------------------------------------|----------|
+| `tilesources`            | string  | JSON array of IIIF manifest URLs or tile source URLs. Example: `'["https://example.com/manifest.json"]'` or `'["https://example.com/info.json"]'` | `""`     |
+| `pagenumber`             | number  | Current page number in a multi-image sequence (1-based, where 1 = first image).                                                                       | `1`      |
+| `zoom`                   | number  | Zoom level of the viewer.                                                                                                                                | `1`      |
+| `rotation`               | number  | Rotation angle in degrees (0-360).                                                                                                                       | `0`      |
+| `clicktozoom`            | boolean | Enable click-to-zoom functionality.                                                                                                                      | `true`   |
+| `shownavigationcontrol`  | boolean | Show/hide all navigation controls.                                                                                                                       | `true`   |
+| `sequencemode`           | boolean | Enable sequence mode for multi-image navigation.                                                                                                         | `false`  |
+| `shownavigator`          | boolean | Show/hide the navigator mini-map.                                                                                                                        | `true`   |
+| `showzoomcontrol`        | boolean | Show/hide zoom in/out buttons.                                                                                                                           | `true`   |
+| `showhomecontrol`        | boolean | Show/hide the home/reset view button.                                                                                                                    | `true`   |
+| `showfullpagecontrol`    | boolean | Show/hide the fullscreen toggle button.                                                                                                                  | `true`   |
+| `showsequencecontrol`    | boolean | Show/hide previous/next page buttons (requires `sequencemode="true"`).                                                                                   | `true`   |
+| `triggerhome`            | boolean | Trigger home position reset (set to `"true"` to reset view to initial state).                                                                            | `"false"` |
+| `triggerfullscreen`      | boolean | Trigger fullscreen mode toggle (set to `"true"` to toggle fullscreen).                                                                                   | `"false"` |
+| `openseadragon-options`  | string  | JSON object with additional OpenSeadragon configuration options. Example: `'{"showNavigator": true}'`                             | `""`     |
+
+## Public Methods
+
+The component provides the following public methods:
+
+### Navigation
+- `nextPage()` - Navigate to the next page
+- `previousPage()` - Navigate to the previous page
+- `goToPage(pageNumber)` - Navigate to a specific page
+- `getCurrentPage()` - Get the current page number
+- `getTotalPages()` - Get the total number of pages
+
+### Zoom
+- `zoomIn()` - Zoom in by 20%
+- `zoomOut()` - Zoom out by 20%
+- `setZoom(level)` - Set zoom to a specific level
+- `getZoom()` - Get the current zoom level
+
+### View Control
+- `home()` - Reset view to initial state
+- `setFullScreen(fullScreen)` - Set fullscreen mode (true/false)
+- `toggleFullScreen()` - Toggle fullscreen mode
+- `isFullScreen()` - Check if in fullscreen mode
+
+### Rotation
+- `rotate(degrees)` - Rotate by specified degrees (relative)
+- `setRotation(degrees)` - Set rotation to specific angle (absolute)
+- `getRotation()` - Get current rotation angle
+
+## Examples
+
+### Basic IIIF Manifest
+
+```html
+<edirom-openseadragon 
+    tilesources='["https://example.com/iiif/manifest.json"]'>
+</edirom-openseadragon>
+```
+
+### Multi-Page Sequence with Controls and Trigger Attributes
+
+```html
+<edirom-openseadragon 
+    id="viewer"
+    tilesources='["https://content.staatsbibliothek-berlin.de/dc/69007087X-0001/info.json", "https://content.staatsbibliothek-berlin.de/dc/69007087X-0002/info.json"]'
+    pagenumber="1"
+    zoom="1"
+    rotation="0"
+    triggerhome="false"
+    triggerfullscreen="false"
+    sequencemode="true"
+    showsequencecontrol="true"
+    shownavigator="true"
+    showzoomcontrol="true"
+    showhomecontrol="true"
+    showfullpagecontrol="true">
+</edirom-openseadragon>
+```
+
+### Controlling via JavaScript and Triggers
+
+```javascript
+const viewer = document.querySelector('edirom-openseadragon');
+
+// Navigate to page 3
+viewer.setAttribute('pagenumber', '3');
+
+// Zoom to level 2
+viewer.setAttribute('zoom', '2');
+
+// Reset to home position
+viewer.setAttribute('triggerhome', 'true');
+
+// Toggle fullscreen
+viewer.setAttribute('triggerfullscreen', 'true');
+```
+
+### Custom OpenSeadragon Configuration
+
+<!-- Example: Disable sequence mode via options -->
+<edirom-openseadragon 
+    openseadragon-options='{"sequenceMode": false}'>
+</edirom-openseadragon>
+
+
+## IIIF Support
+
+The component supports both IIIF manifests and direct image tile sources:
+
+- **IIIF Manifests**: Automatically fetches and parses IIIF Presentation API manifests to extract image URLs
+- **Direct Tile Sources**: Use IIIF Image API info.json URLs directly
+
+## Trigger Attributes
+
+Trigger attributes are used to invoke actions on the viewer. Set these attributes to `"true"` to trigger the corresponding action:
+
+- **`triggerhome`**: Reset view to initial/home position
+- **`triggerfullscreen`**: Toggle fullscreen mode on/off
+
+Example:
+```javascript
+const viewer = document.querySelector('edirom-openseadragon');
+viewer.setAttribute('triggerhome', 'true');      // Reset to home position
+viewer.setAttribute('triggerfullscreen', 'true'); // Toggle fullscreen
+```
+
+## Events
+
+The component fires custom events when attributes change:
+
+- `communicate-zoom-update` - Fired when zoom level changes
+- `communicate-rotation-update` - Fired when rotation changes
+- `communicate-pagenumber-update` - Fired when page changes
+- `communicate-triggerhome-update` - Fired when home is triggered
+- `communicate-triggerfullscreen-update` - Fired when fullscreen is triggered
+- And more for each observable attribute
+
+## Browser Support
+
+The component uses modern web standards (Custom Elements, Shadow DOM) and requires a modern browser with ES6+ support
 
 
 
