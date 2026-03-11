@@ -95,7 +95,7 @@ This applies to `pagenumber` attribute and all page-related methods. The compone
 | `showsequencecontrol`    | boolean | Show/hide previous/next page buttons (requires `sequencemode="true"`).                                                                                   | `true`   |
 | `triggerhome`            | boolean | Trigger home position reset (set to `"true"` to reset view to initial state).                                                                            | `"false"` |
 | `triggerfullscreen`      | boolean | Trigger fullscreen mode toggle (set to `"true"` to toggle fullscreen).                                                                                   | `"false"` |
-| `openseadragon-options`  | string  | JSON object with additional OpenSeadragon configuration options. Example: `'{"animationTime": 0.5, "zoomPerScroll": 1.2}'`                             | `""`     |
+| `openseadragon-options`  | string  | JSON object with additional OpenSeadragon configuration options. Example: `'{"showNavigator": true}'`                             | `""`     |
 
 ## Public Methods
 
