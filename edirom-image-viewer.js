@@ -58,6 +58,9 @@ class EdiromOpenseadragon extends HTMLElement {
         /** @type {OpenSeadragon.Viewer} OpenSeadragon viewer instance */
         this.openSeaDragon = null;
         
+        /** @type {number} Total number of tile sources (images/pages) */
+        this.totalTileSources = 0;
+        
         /** @type {object} Additional OpenSeadragon options */
         try {
             this.options = this.getAttribute('openseadragon-options') ? 
@@ -179,6 +182,15 @@ class EdiromOpenseadragon extends HTMLElement {
       
             // handle tileSources property change
             case 'tilesources':
+                // Clear tileSources from options when tilesources attribute is explicitly set
+                if (this.options.tileSources) {
+                    delete this.options.tileSources;
+                }
+                // Destroy existing viewer to ensure complete replacement
+                if(this.openSeaDragon) {
+                    this.openSeaDragon.destroy();
+                    this.openSeaDragon = null;
+                }
                 this.displayOpenSeadragon();
                 break;
             
@@ -207,9 +219,24 @@ class EdiromOpenseadragon extends HTMLElement {
                 break;
             
             case 'openseadragon-options':
-                this.options = JSON.parse(newPropertyValue);
-                if(this.openSeaDragon) {
-                    this.displayOpenSeadragon();
+                try {
+                    this.options = JSON.parse(newPropertyValue);
+                    // If tileSources is in options, clear the tilesources attribute
+                    // so that options take priority
+                    if (this.options.tileSources) {
+                        this.tilesources = '';
+                    }
+                    // Destroy existing viewer to ensure complete replacement
+                    if(this.openSeaDragon) {
+                        this.openSeaDragon.destroy();
+                        this.openSeaDragon = null;
+                    }
+                    // If tileSources is in options, rebuild the viewer even if it doesn't exist yet
+                    if (this.options.tileSources || this.tilesources) {
+                        this.displayOpenSeadragon();
+                    }
+                } catch (e) {
+                    console.error('Invalid openseadragon-options JSON:', e);
                 }
                 break;
 
@@ -261,7 +288,22 @@ class EdiromOpenseadragon extends HTMLElement {
             }
 
             try {
-                const tileSources = JSON.parse(this.tilesources);
+                // Determine which tile sources to use
+                // Priority: openseadragon-options.tileSources > tilesources attribute
+                let tileSources = null;
+                
+                if (this.options.tileSources) {
+                    console.log('Using tileSources from openseadragon-options');
+                    tileSources = Array.isArray(this.options.tileSources) 
+                        ? this.options.tileSources 
+                        : [this.options.tileSources];
+                } else if (this.tilesources && this.tilesources.trim()) {
+                    console.log('Using tilesources attribute');
+                    tileSources = JSON.parse(this.tilesources);
+                } else {
+                    tileSources = [];
+                }
+                
                 console.log('Parsed tile sources:', tileSources);
                 
                 // Check if it's a IIIF manifest URL (string ending with .json)
@@ -326,6 +368,9 @@ class EdiromOpenseadragon extends HTMLElement {
         }
         
         try {
+            // Store the tile sources count
+            this.totalTileSources = Array.isArray(tileSources) ? tileSources.length : 1;
+            
             this.openSeaDragon = OpenSeadragon({
                 element: this.viewerDiv,
                 prefixUrl: 'https://unpkg.com/openseadragon@4.1.1/build/openseadragon/images/',
@@ -419,7 +464,10 @@ class EdiromOpenseadragon extends HTMLElement {
     }
     
     getTotalPages() {
-        return this.openSeaDragon ? this.openSeaDragon.world.getItemCount() : 0;
+        // In sequence mode, multiple images are pages of a single item
+        // Return the total number of tile sources (pages) that were loaded
+        // Based on: https://github.com/openseadragon/openseadragon/issues/1448
+        return this.totalTileSources > 0 ? this.totalTileSources : 1;
     }
     
     // Home/reset view
