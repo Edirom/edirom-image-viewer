@@ -1,3 +1,7 @@
+
+console.log("Image Viewer loaded!");
+
+
 /**
  * Custom Web Component for viewing IIIF images using the OpenSeadragon viewer.
  * 
@@ -123,6 +127,7 @@ class EdiromOpenseadragon extends HTMLElement {
      * Loads the OpenSeadragon library and initializes the viewer container.
      */
     connectedCallback() {
+        console.log("Image Viewer connected to DOM!");
         
         // Add host styles
         const style = document.createElement('style');
@@ -138,7 +143,7 @@ class EdiromOpenseadragon extends HTMLElement {
         // Load OpenSeadragon CSS into shadow DOM
         const cssLink = document.createElement('link');
         cssLink.rel = 'stylesheet';
-        cssLink.href = 'https://unpkg.com/openseadragon@4.1.1/build/openseadragon/openseadragon.min.css';
+        cssLink.href = 'https://unpkg.com/openseadragon@6.0.2/build/openseadragon/openseadragon.min.css';
         this.shadowRoot.appendChild(cssLink);
         
         // Create a div for the OpenSeadragon viewer
@@ -152,7 +157,7 @@ class EdiromOpenseadragon extends HTMLElement {
         // Load OpenSeadragon script to main document if not already loaded
         if (!window.OpenSeadragon) {
             const osdScript = document.createElement('script');
-            osdScript.src = "https://unpkg.com/openseadragon@4.1.1/build/openseadragon/openseadragon.min.js";
+            osdScript.src = "https://unpkg.com/openseadragon@6.0.2/build/openseadragon/openseadragon.min.js";
             osdScript.defer = true;
             document.head.appendChild(osdScript);
             
@@ -373,7 +378,7 @@ class EdiromOpenseadragon extends HTMLElement {
             
             this.openSeaDragon = OpenSeadragon({
                 element: this.viewerDiv,
-                prefixUrl: 'https://unpkg.com/openseadragon@4.1.1/build/openseadragon/images/',
+                prefixUrl: 'https://unpkg.com/openseadragon@6.0.2/build/openseadragon/images/',
                 preserveViewport: this.preserveviewport === 'true',
                 visibilityRatio: parseFloat(this.visibilityratio) || 1.0,
                 minZoomLevel: parseFloat(this.minzoomlevel) || 0.5,
