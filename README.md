@@ -16,6 +16,7 @@ This web component displays IIIF images using the [OpenSeadragon](https://opense
 - **Attribute-Driven**: All interactions through standard HTML attributes
 - **Custom Configuration**: Pass advanced OpenSeadragon options via JSON
 - **Event Communication**: Custom events for state changes
+- **Step-Based Sequence Navigation**: Define a custom sequence of named steps, each pointing to a page and an optional pixel-precise zone. Navigate step by step with smooth animated viewport transitions.
 
 ## License
 
@@ -96,6 +97,8 @@ This applies to `pagenumber` attribute and all page-related methods. The compone
 | `triggerhome`            | boolean | Trigger home position reset (set to `"true"` to reset view to initial state).                                                                            | `"false"` |
 | `triggerfullscreen`      | boolean | Trigger fullscreen mode toggle (set to `"true"` to toggle fullscreen).                                                                                   | `"false"` |
 | `openseadragon-options`  | string  | JSON object with additional OpenSeadragon configuration options. Example: `'{"showNavigator": true}'`                             | `""`     |
+| `sequence-data`          | string  | JSON array of step objects for custom step-based navigation. See [Step-Based Sequence Navigation](#step-based-sequence-navigation) for details. | `"[]"` |
+| `current-step`           | string  | The `name` of the currently active step. Setting this attribute navigates the viewer to that step.         | `""`     |
 
 ## Public Methods
 
@@ -124,6 +127,13 @@ The component provides the following public methods:
 - `rotate(degrees)` - Rotate by specified degrees (relative)
 - `setRotation(degrees)` - Set rotation to specific angle (absolute)
 - `getRotation()` - Get current rotation angle
+
+### Step-Based Sequence Navigation
+- `goToStep(stepName)` - Navigate to a specific step by its name
+- `nextStepInSequence()` - Navigate to the next step
+- `previousStepInSequence()` - Navigate to the previous step
+- `getCurrentStepName()` - Get the name of the currently active step
+- `getTotalSteps()` - Get the total number of steps
 
 ## Examples
 
@@ -212,6 +222,69 @@ The component fires custom events when attributes change:
 - `communicate-triggerhome-update` - Fired when home is triggered
 - `communicate-triggerfullscreen-update` - Fired when fullscreen is triggered
 - And more for each observable attribute
+
+The component also fires a dedicated event for step navigation:
+
+- `step-changed` - Fired after the viewer successfully navigates to a step in the custom sequence. The event detail contains the step object: `{ step: { name, page, ulx?, uly?, lrx?, lry? } }`.
+
+```javascript
+viewer.addEventListener('step-changed', (event) => {
+    console.log('Current step:', event.detail.step.name);
+});
+```
+
+## Step-Based Sequence Navigation
+
+The `sequence-data` attribute enables a custom, name-based navigation layer on top of OpenSeadragon's built-in multi-image support. This is independent of OSD's own sequence controls.
+
+### Step Object Format
+
+Each step in the array must have a `name` and a 1-based `page` number. Zone coordinates (`ulx`, `uly`, `lrx`, `lry`) are optional pixel values defining the upper-left and lower-right corners of a rectangular region on the page.
+
+```json
+[
+  { "name": "1", "page": 1 },
+  { "name": "2", "page": 2, "ulx": 100, "uly": 200, "lrx": 800, "lry": 600 },
+  { "name": "3", "page": 2, "ulx": 900, "uly": 200, "lrx": 1600, "lry": 600 }
+]
+```
+
+- **Without zone coordinates**: the viewer resets to the home (full-page) view.
+- **With zone coordinates**: the viewer smoothly pans and zooms to fit the defined rectangle using OpenSeadragon's spring animation.
+- **Same page, different zones**: transitions are smooth animated viewport pans/zooms, never abrupt jumps.
+- **Cross-page transitions**: the component waits until the new page's tiles are loaded before applying the zone, ensuring coordinate conversion is always accurate.
+
+### Example: Sequence Navigation with Spin Box
+
+```html
+<edirom-openseadragon
+    id="viewer"
+    sequencemode="true"
+    showsequencecontrol="false"
+    tilesources='[...]'
+    sequence-data='[
+        { "name": "1", "page": 1 },
+        { "name": "2", "page": 2, "ulx": 100, "uly": 200, "lrx": 800, "lry": 600 }
+    ]'>
+</edirom-openseadragon>
+```
+
+```javascript
+const viewer = document.querySelector('#viewer');
+
+// Navigate to step "2"
+viewer.setAttribute('current-step', '2');
+
+// Or use the public API
+viewer.goToStep('2');
+viewer.nextStepInSequence();
+viewer.previousStepInSequence();
+
+// React to step changes (e.g. to update an external control)
+viewer.addEventListener('step-changed', (event) => {
+    console.log('Navigated to step:', event.detail.step.name);
+});
+```
 
 ## Browser Support
 
