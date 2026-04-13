@@ -31,12 +31,13 @@ console.log("Image Viewer loaded!");
  * @attribute {string} triggerfullscreen - Trigger attribute to toggle fullscreen mode.
  * @attribute {object|string} openseadragon-options - Additional OpenSeadragon configuration options as JSON object.
  * 
- * @attribute {string} sequence-data - JSON string array of step objects for custom step-based navigation.
- *   Each step: { name: string, page: number, ulx?: number, uly?: number, lrx?: number, lry?: number }
- * @attribute {string} current-step - The name of the currently active step in the sequence.
+ * @attribute {string} zones-data - JSON object mapping zone keys to zone objects.
+ *   Each zone: { name: string, page: number, ulx: number, uly: number, lrx: number, lry: number }
+ * @attribute {string} zone - Key of the zone to navigate to (must exist in zones-data).
  * 
  * @fires communicate-[property]-update - Fired when a property is updated via attribute change.
- * @fires step-changed - Fired when the viewer navigates to a new step in the custom sequence.
+ * @fires page-changed - Fired when the viewer navigates to a new page. detail: { pageNumber } (1-based).
+ * @fires zone-changed - Fired when the viewer navigates to a zone. detail: { zoneKey, zone }.
  * 
  * @method nextPage - Navigate to the next page in a sequence.
  * @method previousPage - Navigate to the previous page in a sequence.
@@ -53,11 +54,6 @@ console.log("Image Viewer loaded!");
  * @method isFullScreen - Check if in fullscreen mode.
  * @method rotate - Rotate by specified degrees.
  * @method setRotation - Set rotation to specific angle.
- * @method goToStep - Navigate to a specific step by name.
- * @method nextStepInSequence - Navigate to the next step in the custom sequence.
- * @method previousStepInSequence - Navigate to the previous step in the custom sequence.
- * @method getCurrentStepName - Get the name of the current step.
- * @method getTotalSteps - Get the total number of steps.
  * @method getRotation - Get current rotation angle.
  */
 class EdiromOpenseadragon extends HTMLElement {
@@ -75,13 +71,13 @@ class EdiromOpenseadragon extends HTMLElement {
         /** @type {number} Total number of tile sources (images/pages) */
         this.totalTileSources = 0;
         
-        /** @type {Array<Object>} Parsed step objects from the sequence-data attribute */
-        this._sequenceSteps = [];
+        /** @type {Object} Zone lookup map parsed from the zones-data attribute */
+        this._zonesData = {};
 
-        /** @type {number} Index of the currently active step in _sequenceSteps (-1 = none) */
-        this._currentStepIndex = -1;
+        /** @type {string|null} Key of the currently active zone, or null */
+        this._currentZoneKey = null;
 
-        /** @type {Object|null} Step waiting to be applied after an OSD page change completes */
+        /** @type {Object|null} Zone waiting to be applied after an OSD page change completes */
         this._pendingZoneAfterPageChange = null;
 
         /** @type {object} Additional OpenSeadragon options */
@@ -100,7 +96,7 @@ class EdiromOpenseadragon extends HTMLElement {
      * @returns {Array<string>} The list of observed attributes.
      */
     static get observedAttributes() {
-        return ['preserveviewport', 'clicktozoom', 'visibilityratio', 'minzoomlevel', 'maxzoomlevel', 'shownavigationcontrol', 'sequencemode', 'shownavigator', 'showzoomcontrol', 'showhomecontrol', 'showfullpagecontrol', 'showsequencecontrol', 'tilesources', 'pagenumber', 'zoom', 'rotation', 'triggerhome', 'triggerfullscreen', 'openseadragon-options', 'sequence-data', 'current-step'];
+        return ['preserveviewport', 'clicktozoom', 'visibilityratio', 'minzoomlevel', 'maxzoomlevel', 'shownavigationcontrol', 'sequencemode', 'shownavigator', 'showzoomcontrol', 'showhomecontrol', 'showfullpagecontrol', 'showsequencecontrol', 'tilesources', 'pagenumber', 'zoom', 'rotation', 'triggerhome', 'triggerfullscreen', 'openseadragon-options', 'zones-data', 'zone'];
     }
 
     /**
@@ -287,24 +283,21 @@ class EdiromOpenseadragon extends HTMLElement {
                 }
                 break;
 
-            case 'sequence-data':
+            case 'zones-data':
                 try {
-                    this._sequenceSteps = JSON.parse(newPropertyValue) || [];
+                    this._zonesData = JSON.parse(newPropertyValue) || {};
                 } catch (e) {
-                    console.error('Invalid sequence-data JSON:', e);
-                    this._sequenceSteps = [];
+                    console.error('Invalid zones-data JSON:', e);
+                    this._zonesData = {};
                 }
-                // If current-step is already set, re-apply it against the new steps;
-                // otherwise navigate to the first step.
-                if (this['current-step']) {
-                    this._goToStepByName(this['current-step']);
-                } else if (this._sequenceSteps.length > 0) {
-                    this._applyStep(this._sequenceSteps[0], 0);
+                // If a zone key is already active, re-apply it against the new data.
+                if (this._currentZoneKey) {
+                    this._applyZoneByKey(this._currentZoneKey);
                 }
                 break;
 
-            case 'current-step':
-                this._goToStepByName(newPropertyValue);
+            case 'zone':
+                this._applyZoneByKey(newPropertyValue);
                 break;
 
             // handle default
@@ -440,37 +433,30 @@ class EdiromOpenseadragon extends HTMLElement {
             });
             console.log('OpenSeadragon viewer initialized successfully:', this.openSeaDragon);
 
-            // --- Custom sequence step handlers ---
-            // After a page change, apply the pending zone (if any) once the
-            // new TiledImage has loaded so coordinate conversion is safe.
+            // --- Page change and zone handlers ---
+            // Fire page-changed on every OSD page navigation.
+            // If a zone was requested for this page, apply it once tiles are loaded.
             this.openSeaDragon.addHandler('page', (event) => {
+                this._firePageChanged(event.page + 1);
                 if (!this._pendingZoneAfterPageChange) return;
                 const pending = this._pendingZoneAfterPageChange;
+                this._pendingZoneAfterPageChange = null;
                 // Wait for the tiled image on the new page to be fully ready
                 this.openSeaDragon.addOnceHandler('tile-loaded', () => {
-                    this._applyZone(pending.step);
-                    this._currentStepIndex = pending.index;
-                    this._pendingZoneAfterPageChange = null;
-                    this._fireStepChanged(pending.step);
+                    this._applyZone(pending.zone);
+                    this._fireZoneChanged(pending.zoneKey, pending.zone);
                 });
             });
 
-            // If a step was requested before the viewer was ready, apply it now.
-            // The first page's TiledImage is not yet loaded at this point, so
-            // we must wait for 'tile-loaded' before applying the zone — same as
-            // we do for cross-page transitions.
-            if (this._sequenceSteps.length > 0) {
-                const index = this['current-step']
-                    ? this._sequenceSteps.findIndex(s => String(s.name) === String(this['current-step']))
-                    : (this._currentStepIndex >= 0 ? this._currentStepIndex : 0);
-                if (index >= 0) {
-                    const step = this._sequenceSteps[index];
-                    this.openSeaDragon.addOnceHandler('tile-loaded', () => {
-                        this._applyZone(step);
-                        this._currentStepIndex = index;
-                        this._fireStepChanged(step);
-                    });
-                }
+            // If a zone was requested before the viewer was ready, apply it now.
+            // Wait for 'tile-loaded' so coordinate conversion is safe.
+            if (this._currentZoneKey && this._zonesData[this._currentZoneKey]) {
+                const zone = this._zonesData[this._currentZoneKey];
+                const zoneKey = this._currentZoneKey;
+                this.openSeaDragon.addOnceHandler('tile-loaded', () => {
+                    this._applyZone(zone);
+                    this._fireZoneChanged(zoneKey, zone);
+                });
             }
         } catch (error) {
             console.error('Error initializing OpenSeadragon:', error);
@@ -595,64 +581,52 @@ class EdiromOpenseadragon extends HTMLElement {
     }
 
     // ---------------------------------------------------------------
-    //  Custom sequence step navigation
-    //  (independent of OpenSeadragon's built-in sequence controls)
+    //  Zone navigation
     // ---------------------------------------------------------------
 
     /**
-     * Resolves a step by its name and applies it.
-     * @param {string} stepName - The name of the target step.
-     */
-    _goToStepByName(stepName) {
-        if (!this._sequenceSteps.length) return;
-        const index = this._sequenceSteps.findIndex(s => String(s.name) === String(stepName));
-        if (index === -1) {
-            console.warn(`edirom-openseadragon: step "${stepName}" not found in sequence-data.`);
-            return;
-        }
-        this._applyStep(this._sequenceSteps[index], index);
-    }
-
-    /**
-     * Core method: navigates the viewer to the given step.
-     * Handles same-page zone transitions (smooth) and cross-page transitions
+     * Navigates the viewer to the zone identified by `zoneKey` in `_zonesData`.
+     * Handles same-page transitions (smooth) and cross-page transitions
      * (page change + deferred zone application).
-     * @param {Object} step  - The step object { name, page, ulx?, uly?, lrx?, lry? }.
-     * @param {number} index - Index of the step in _sequenceSteps.
+     * @param {string} zoneKey - Key of the zone in the zones-data map.
      */
-    _applyStep(step, index) {
+    _applyZoneByKey(zoneKey) {
+        const zone = this._zonesData[zoneKey];
+        if (!zone) {
+            console.warn(`edirom-openseadragon: zone "${zoneKey}" not found in zones-data.`);
+            return;
+        }
+        this._currentZoneKey = zoneKey;
+
         if (!this.openSeaDragon) {
-            // Viewer not ready yet — store for later (initializeViewer will pick it up)
-            this._currentStepIndex = index;
+            // Viewer not ready yet — initializeViewer will pick it up via _currentZoneKey.
             return;
         }
 
-        const targetPage = parseInt(step.page) - 1; // 1-based → 0-based
+        const targetPage = parseInt(zone.page) - 1; // 1-based → 0-based
         const currentPage = this.openSeaDragon.currentPage();
 
         if (targetPage === currentPage) {
             // Same page: apply zone directly (smooth viewport animation)
-            this._applyZone(step);
-            this._currentStepIndex = index;
-            this._fireStepChanged(step);
+            this._applyZone(zone);
+            this._fireZoneChanged(zoneKey, zone);
         } else {
             // Different page: defer zone until the new page's tiles are loaded
-            this._pendingZoneAfterPageChange = { step, index };
+            this._pendingZoneAfterPageChange = { zoneKey, zone };
             this.openSeaDragon.goToPage(targetPage);
         }
     }
 
     /**
-     * Zooms/pans the viewport to the zone defined in `step`, or resets to
-     * home if no zone coordinates are present.  Uses OSD's spring animation
-     * (immediately=false) for smooth transitions.
-     * @param {Object} step - The step object with optional ulx, uly, lrx, lry.
+     * Zooms/pans the viewport to the zone coordinates, or resets to home if
+     * no coordinates are present. Uses OSD's spring animation for smooth transitions.
+     * @param {Object} zone - The zone object with optional ulx, uly, lrx, lry.
      */
-    _applyZone(step) {
+    _applyZone(zone) {
         if (!this.openSeaDragon) return;
 
-        const hasZone = step.ulx != null && step.uly != null &&
-            step.lrx != null && step.lry != null;
+        const hasZone = zone.ulx != null && zone.uly != null &&
+            zone.lrx != null && zone.lry != null;
 
         if (!hasZone) {
             this.openSeaDragon.viewport.goHome();
@@ -668,71 +642,36 @@ class EdiromOpenseadragon extends HTMLElement {
         }
 
         const rect = tiledImage.imageToViewportRectangle(
-            Number(step.ulx),
-            Number(step.uly),
-            Number(step.lrx) - Number(step.ulx),
-            Number(step.lry) - Number(step.uly)
+            Number(zone.ulx),
+            Number(zone.uly),
+            Number(zone.lrx) - Number(zone.ulx),
+            Number(zone.lry) - Number(zone.uly)
         );
         // fitBounds without immediately=true uses OSD's spring animation
         this.openSeaDragon.viewport.fitBounds(rect);
     }
 
     /**
-     * Dispatches the `step-changed` custom event.
-     * @param {Object} step - The step that was navigated to.
+     * Dispatches the `zone-changed` custom event.
+     * @param {string} zoneKey - The key of the zone that was navigated to.
+     * @param {Object} zone - The zone object that was navigated to.
      */
-    _fireStepChanged(step) {
-        this.dispatchEvent(new CustomEvent('step-changed', {
-            detail: { step },
+    _fireZoneChanged(zoneKey, zone) {
+        this.dispatchEvent(new CustomEvent('zone-changed', {
+            detail: { zoneKey, zone },
             bubbles: true
         }));
     }
 
     /**
-     * Navigate to a specific step by its name.
-     * @param {string} stepName - The name of the target step.
+     * Dispatches the `page-changed` custom event.
+     * @param {number} pageNumber - The 1-based page number that was navigated to.
      */
-    goToStep(stepName) {
-        this._goToStepByName(stepName);
-    }
-
-    /**
-     * Navigate to the next step in the custom sequence.
-     */
-    nextStepInSequence() {
-        if (this._currentStepIndex < this._sequenceSteps.length - 1) {
-            const nextIndex = this._currentStepIndex + 1;
-            this._applyStep(this._sequenceSteps[nextIndex], nextIndex);
-        }
-    }
-
-    /**
-     * Navigate to the previous step in the custom sequence.
-     */
-    previousStepInSequence() {
-        if (this._currentStepIndex > 0) {
-            const prevIndex = this._currentStepIndex - 1;
-            this._applyStep(this._sequenceSteps[prevIndex], prevIndex);
-        }
-    }
-
-    /**
-     * Returns the name of the currently active step, or null if none.
-     * @returns {string|null}
-     */
-    getCurrentStepName() {
-        if (this._currentStepIndex >= 0 && this._currentStepIndex < this._sequenceSteps.length) {
-            return this._sequenceSteps[this._currentStepIndex].name;
-        }
-        return null;
-    }
-
-    /**
-     * Returns the total number of steps in the custom sequence.
-     * @returns {number}
-     */
-    getTotalSteps() {
-        return this._sequenceSteps.length;
+    _firePageChanged(pageNumber) {
+        this.dispatchEvent(new CustomEvent('page-changed', {
+            detail: { pageNumber },
+            bubbles: true
+        }));
     }
 }
 
