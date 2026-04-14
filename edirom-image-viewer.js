@@ -428,6 +428,12 @@ class EdiromOpenseadragon extends HTMLElement {
                 gestureSettingsMouse: {
                   clickToZoom: this.clicktozoom === 'true',
                 },
+                // Required for OSD's WebGL drawer to be able to use cross-origin
+                // tile images as WebGL textures. Without this, tiles fetched from
+                // a different origin are "tainted" and cannot be uploaded to WebGL,
+                // causing blank pages on revisit (cached tiles trigger the failure
+                // before OSD's canvas-drawer fallback can schedule a redraw).
+                crossOriginPolicy: 'Anonymous',
                 // Merge additional options from openseadragon-options attribute
                 ...this.options
             });
