@@ -15,7 +15,11 @@
  * @attribute {number} pagenumber - The current page/image number to display (for multi-image sequences).
  * @attribute {number} zoom - The zoom level for the viewer.
  * @attribute {number} rotation - The rotation angle in degrees (0-360).
+ * @attribute {boolean} preserveviewport - Whether to preserve viewport when changing pages.
  * @attribute {boolean} clicktozoom - Enable/disable click-to-zoom functionality.
+ * @attribute {number} visibilityratio - Ratio of image that must be visible (0.0-1.0).
+ * @attribute {number} minzoomlevel - Minimum allowed zoom level.
+ * @attribute {number} maxzoomlevel - Maximum allowed zoom level.
  * @attribute {boolean} shownavigationcontrol - Show/hide all navigation controls.
  * @attribute {boolean} sequencemode - Enable sequence mode for multiple images.
  * @attribute {boolean} shownavigator - Show/hide the navigator mini-map.
@@ -54,21 +58,14 @@ class EdiromOpenseadragon extends HTMLElement {
     constructor() {
         super();
         this.attachShadow({ mode: 'open' });
+        console.log("Constructor called");
 
         /** @type {OpenSeadragon.Viewer} OpenSeadragon viewer instance */
         this.openSeaDragon = null;
         
-        /** @type {number} Total number of tile sources (images/pages) */
-        this.totalTileSources = 0;
-        
         /** @type {object} Additional OpenSeadragon options */
-        try {
-            this.options = this.getAttribute('openseadragon-options') ? 
-                JSON.parse(this.getAttribute('openseadragon-options')) : {};
-        } catch (e) {
-            console.error('Invalid openseadragon-options JSON:', e);
-            this.options = {};
-        }
+        this.options = this.getAttribute('openseadragon-options') ? 
+            JSON.parse(this.getAttribute('openseadragon-options')) : {};
     }
 
     /**
@@ -77,7 +74,7 @@ class EdiromOpenseadragon extends HTMLElement {
      * @returns {Array<string>} The list of observed attributes.
      */
     static get observedAttributes() {
-        return ['preserveviewport', 'clicktozoom', 'visibilityratio', 'minzoomlevel', 'maxzoomlevel', 'shownavigationcontrol', 'sequencemode', 'shownavigator', 'showzoomcontrol', 'showhomecontrol', 'showfullpagecontrol', 'showsequencecontrol', 'tilesources', 'pagenumber', 'zoom', 'rotation', 'triggerhome', 'triggerfullscreen', 'openseadragon-options'];
+        return ['preserveviewport', 'clicktozoom', 'visibilityratio', 'minzoomlevel', 'maxzoomlevel', 'shownavigationcontrol',  'sequencemode', 'shownavigator', 'showzoomcontrol', 'showhomecontrol', 'showfullpagecontrol', 'showsequencecontrol', 'tilesources', 'pagenumber', 'zoom', 'rotation', 'triggerhome', 'triggerfullscreen', 'openseadragon-options'];
     }
 
     /**
@@ -105,11 +102,7 @@ class EdiromOpenseadragon extends HTMLElement {
         
         // custom event for property update
         const event = new CustomEvent('communicate-' + property + '-update', {
-            detail: {
-                element: this.tagName.toLowerCase(),
-                property: property,
-                value: newPropertyValue
-            },
+            detail: { [property]: newPropertyValue },
             bubbles: true
         });
         this.dispatchEvent(event);
@@ -123,51 +116,49 @@ class EdiromOpenseadragon extends HTMLElement {
      * Loads the OpenSeadragon library and initializes the viewer container.
      */
     connectedCallback() {
-        
-        // Add host styles
-        const style = document.createElement('style');
-        style.textContent = `
-            :host {
-                display: block;
-                width: 100%;
-                height: 100%;
-            }
-        `;
-        this.shadowRoot.appendChild(style);
-        
-        // Load OpenSeadragon CSS into shadow DOM
-        const cssLink = document.createElement('link');
-        cssLink.rel = 'stylesheet';
-        cssLink.href = 'https://unpkg.com/openseadragon@4.1.1/build/openseadragon/openseadragon.min.css';
-        this.shadowRoot.appendChild(cssLink);
-        
+        console.log("Connected to DOM");
+
+        // Inject stylesheet links so overlay styles (measures, annotations) work inside the shadow root
+        const cssFiles = [
+            'resources/css/todo.css',
+            'resources/css/annotation-style.css'
+        ];
+        cssFiles.forEach(href => {
+            const link = document.createElement('link');
+            link.rel = 'stylesheet';
+            link.href = href;
+            this.shadowRoot.appendChild(link);
+        });
+
         // Create a div for the OpenSeadragon viewer
         this.viewerDiv = document.createElement('div');
         this.viewerDiv.id = 'viewer';
         this.viewerDiv.style.width = '100%';
         this.viewerDiv.style.height = '100%';
-        this.viewerDiv.style.position = 'relative';
         this.shadowRoot.appendChild(this.viewerDiv);
-        
-        // Load OpenSeadragon script to main document if not already loaded
-        if (!window.OpenSeadragon) {
+
+        // Load OSD script into document.head so it runs in the global scope
+        // (scripts appended to shadow root do not execute)
+        if (!document.getElementById('osd-script')) {
             const osdScript = document.createElement('script');
-            osdScript.src = "https://unpkg.com/openseadragon@4.1.1/build/openseadragon/openseadragon.min.js";
-            osdScript.defer = true;
-            document.head.appendChild(osdScript);
-            
+            osdScript.id = 'osd-script';
+            osdScript.src = "https://cdnjs.cloudflare.com/ajax/libs/openseadragon/4.1.1/openseadragon.min.js";
             osdScript.onload = () => {
                 if (window.OpenSeadragon) {
                     this.set('tilesources', this.getAttribute('tilesources'));
                 }
             };
-            
-            osdScript.onerror = () => {
-                console.error("Failed to load OpenSeadragon script");
-            };
-        } else {
-            // OpenSeadragon already loaded
+            document.head.appendChild(osdScript);
+        } else if (window.OpenSeadragon) {
+            // Script already loaded
             this.set('tilesources', this.getAttribute('tilesources'));
+        } else {
+            // Script tag exists but not yet loaded — wait for it
+            document.getElementById('osd-script').addEventListener('load', () => {
+                if (window.OpenSeadragon) {
+                    this.set('tilesources', this.getAttribute('tilesources'));
+                }
+            });
         }
     }
 
@@ -182,15 +173,6 @@ class EdiromOpenseadragon extends HTMLElement {
       
             // handle tileSources property change
             case 'tilesources':
-                // Clear tileSources from options when tilesources attribute is explicitly set
-                if (this.options.tileSources) {
-                    delete this.options.tileSources;
-                }
-                // Destroy existing viewer to ensure complete replacement
-                if(this.openSeaDragon) {
-                    this.openSeaDragon.destroy();
-                    this.openSeaDragon = null;
-                }
                 this.displayOpenSeadragon();
                 break;
             
@@ -207,36 +189,17 @@ class EdiromOpenseadragon extends HTMLElement {
                 break;
             
             case 'triggerhome':
-                if(newPropertyValue === 'true') {
-                    this.home();
-                }
+                this.home();
                 break;
             
             case 'triggerfullscreen':
-                if(newPropertyValue === 'true') {
-                    this.toggleFullScreen();
-                }
+                this.toggleFullScreen();
                 break;
             
             case 'openseadragon-options':
-                try {
-                    this.options = JSON.parse(newPropertyValue);
-                    // If tileSources is in options, clear the tilesources attribute
-                    // so that options take priority
-                    if (this.options.tileSources) {
-                        this.tilesources = '';
-                    }
-                    // Destroy existing viewer to ensure complete replacement
-                    if(this.openSeaDragon) {
-                        this.openSeaDragon.destroy();
-                        this.openSeaDragon = null;
-                    }
-                    // If tileSources is in options, rebuild the viewer even if it doesn't exist yet
-                    if (this.options.tileSources || this.tilesources) {
-                        this.displayOpenSeadragon();
-                    }
-                } catch (e) {
-                    console.error('Invalid openseadragon-options JSON:', e);
+                this.options = JSON.parse(newPropertyValue);
+                if(this.openSeaDragon) {
+                    this.displayOpenSeadragon();
                 }
                 break;
 
@@ -276,76 +239,48 @@ class EdiromOpenseadragon extends HTMLElement {
      * For IIIF manifests, fetches and parses the manifest to extract image URLs.
      */
     displayOpenSeadragon() {
-        console.log('=== displayOpenSeadragon called ===');
-        console.log('tilesources:', this.tilesources);
-        console.log('OpenSeadragon available:', !!window.OpenSeadragon);
-        
         if (window.OpenSeadragon) {
 
             if(this.openSeaDragon) {
-                console.log('Destroying existing viewer');
                 this.openSeaDragon.destroy();
             }
 
-            try {
-                // Determine which tile sources to use
-                // Priority: openseadragon-options.tileSources > tilesources attribute
-                let tileSources = null;
+            const tileSources = JSON.parse(this.tilesources);
+            
+            // Check if it's a IIIF manifest URL (string ending with .json)
+            if (Array.isArray(tileSources) && tileSources.length === 1 && 
+                typeof tileSources[0] === 'string' && tileSources[0].includes('manifest')) {
                 
-                if (this.options.tileSources) {
-                    console.log('Using tileSources from openseadragon-options');
-                    tileSources = Array.isArray(this.options.tileSources) 
-                        ? this.options.tileSources 
-                        : [this.options.tileSources];
-                } else if (this.tilesources && this.tilesources.trim()) {
-                    console.log('Using tilesources attribute');
-                    tileSources = JSON.parse(this.tilesources);
-                } else {
-                    tileSources = [];
-                }
-                
-                console.log('Parsed tile sources:', tileSources);
-                
-                // Check if it's a IIIF manifest URL (string ending with .json)
-                if (Array.isArray(tileSources) && tileSources.length === 1 && 
-                    typeof tileSources[0] === 'string' && tileSources[0].includes('manifest')) {
-                    
-                    console.log('Loading IIIF manifest...');
-                    // Fetch and parse the IIIF manifest
-                    fetch(tileSources[0])
-                        .then(response => response.json())
-                        .then(manifest => {
-                            const imageUrls = [];
-                            
-                            // Extract image info.json URLs from IIIF Presentation API manifest
-                            if (manifest.sequences && manifest.sequences[0] && manifest.sequences[0].canvases) {
-                                manifest.sequences[0].canvases.forEach(canvas => {
-                                    if (canvas.images && canvas.images[0] && canvas.images[0].resource) {
-                                        const service = canvas.images[0].resource.service;
-                                        if (service) {
-                                            const serviceId = service['@id'] || service.id;
-                                            imageUrls.push(serviceId + '/info.json');
-                                        }
+                // Fetch and parse the IIIF manifest
+                fetch(tileSources[0])
+                    .then(response => response.json())
+                    .then(manifest => {
+                        const imageUrls = [];
+                        
+                        // Extract image info.json URLs from IIIF Presentation API manifest
+                        if (manifest.sequences && manifest.sequences[0] && manifest.sequences[0].canvases) {
+                            manifest.sequences[0].canvases.forEach(canvas => {
+                                if (canvas.images && canvas.images[0] && canvas.images[0].resource) {
+                                    const service = canvas.images[0].resource.service;
+                                    if (service) {
+                                        const serviceId = service['@id'] || service.id;
+                                        imageUrls.push(serviceId + '/info.json');
                                     }
-                                });
-                            }
-                            
-                            console.log('Extracted image URLs:', imageUrls);
-                            // Initialize OpenSeadragon with extracted image URLs
-                            this.initializeViewer(imageUrls);
-                        })
-                        .catch(error => {
-                            console.error('Error loading IIIF manifest:', error);
-                            // Try to load as regular tile sources
-                            this.initializeViewer(tileSources);
-                        });
-                } else {
-                    // Direct tile sources (not a manifest URL)
-                    console.log('Loading direct tile sources');
-                    this.initializeViewer(tileSources);
-                }
-            } catch (error) {
-                console.error('Error parsing tile sources:', error);
+                                }
+                            });
+                        }
+                        
+                        // Initialize OpenSeadragon with extracted image URLs
+                        this.initializeViewer(imageUrls);
+                    })
+                    .catch(error => {
+                        console.error('Error loading IIIF manifest:', error);
+                        // Try to load as regular tile sources
+                        this.initializeViewer(tileSources);
+                    });
+            } else {
+                // Direct tile sources (not a manifest URL)
+                this.initializeViewer(tileSources);
             }
         } else {
             console.error('OpenSeadragon library is not loaded.');
@@ -358,45 +293,31 @@ class EdiromOpenseadragon extends HTMLElement {
      * @param {Array} tileSources - Array of tile source URLs or objects.
      */
     initializeViewer(tileSources) {
-        console.log('initializeViewer called with:', tileSources);
-        console.log('Viewer div:', this.viewerDiv);
-        console.log('OpenSeadragon available:', !!window.OpenSeadragon);
-        
-        if (!window.OpenSeadragon) {
-            console.error('OpenSeadragon library not available');
-            return;
-        }
-        
-        try {
-            // Store the tile sources count
-            this.totalTileSources = Array.isArray(tileSources) ? tileSources.length : 1;
-            
-            this.openSeaDragon = OpenSeadragon({
-                element: this.viewerDiv,
-                prefixUrl: 'https://unpkg.com/openseadragon@4.1.1/build/openseadragon/images/',
-                preserveViewport: this.preserveviewport === 'true',
-                visibilityRatio: parseFloat(this.visibilityratio) || 1.0,
-                minZoomLevel: parseFloat(this.minzoomlevel) || 0.5,
-                defaultZoomLevel: parseFloat(this.defaultzoomlevel) || 1,
-                maxZoomLevel: parseFloat(this.maxzoomlevel) || 10,
-                showNavigationControl: this.shownavigationcontrol === 'true',
-                tileSources: tileSources,
-                showNavigator:  this.shownavigator === 'true',
-                showZoomControl:  this.showzoomcontrol === 'true',
-                showHomeControl:  this.showhomecontrol === 'true',
-                showFullPageControl:  this.showfullpagecontrol === 'true',
-                showSequenceControl:  this.showsequencecontrol === 'true',
-                sequenceMode: this.sequencemode === 'true',
-                gestureSettingsMouse: {
-                  clickToZoom: this.clicktozoom === 'true',
-                },
-                // Merge additional options from openseadragon-options attribute
-                ...this.options
-            });
-            console.log('OpenSeadragon viewer initialized successfully:', this.openSeaDragon);
-        } catch (error) {
-            console.error('Error initializing OpenSeadragon:', error);
-        }
+        this.openSeaDragon = OpenSeadragon({
+            element: this.shadowRoot.querySelector('#viewer'),
+            preserveViewport: this.preserveviewport === 'true',
+            visibilityRatio: parseFloat(this.visibilityratio) || 1.0,
+            minZoomLevel: parseFloat(this.minzoomlevel) || 0.5,
+            defaultZoomLevel: parseFloat(this.defaultzoomlevel) || 1,
+            maxZoomLevel: parseFloat(this.maxzoomlevel) || 10,
+            showNavigationControl: this.shownavigationcontrol === 'true',
+            tileSources: tileSources,
+            showNavigator:  this.shownavigator === 'true',
+            showZoomControl:  this.showzoomcontrol === 'true',
+            showHomeControl:  this.showhomecontrol === 'true',
+            showFullPageControl:  this.showfullpagecontrol === 'true',
+            showSequenceControl:  this.showsequencecontrol === 'true',
+            sequenceMode: this.sequencemode === 'true',
+            gestureSettingsMouse: {
+              clickToZoom: this.clicktozoom === 'true',
+            },
+            // Performance and timeout settings
+            timeout: 120000, // Increase timeout to 120 seconds for slow servers
+            maxImageCacheCount: 200,
+            imageLoaderLimit: 2, // Limit concurrent tile requests to reduce server load
+            // Merge additional options from openseadragon-options attribute
+            ...this.options
+        });
     }
     
     /**
@@ -452,31 +373,22 @@ class EdiromOpenseadragon extends HTMLElement {
     
     goToPage(pageNumber) {
         if(this.openSeaDragon && !isNaN(pageNumber)) {
-            // Convert from 1-based (user) to 0-based (internal) indexing
-            const zeroBasedPage = parseInt(pageNumber) - 1;
-            this.openSeaDragon.goToPage(zeroBasedPage);
+            this.openSeaDragon.goToPage(pageNumber);
         }
     }
     
     getCurrentPage() {
-        // Return 1-based page number for user display
-        return this.openSeaDragon ? this.openSeaDragon.currentPage() + 1 : 1;
+        return this.openSeaDragon ? this.openSeaDragon.currentPage() : 0;
     }
     
     getTotalPages() {
-        // In sequence mode, multiple images are pages of a single item
-        // Return the total number of tile sources (pages) that were loaded
-        // Based on: https://github.com/openseadragon/openseadragon/issues/1448
-        return this.totalTileSources > 0 ? this.totalTileSources : 1;
+        return this.openSeaDragon ? this.openSeaDragon.world.getItemCount() : 0;
     }
     
     // Home/reset view
     home() {
         if(this.openSeaDragon) {
-            console.log('Calling home()');
-            this.openSeaDragon.viewport.goHome();
-        } else {
-            console.error('OpenSeadragon viewer not initialized');
+            this.openSeaDragon.viewport.goHome(true);
         }
     }
     
