@@ -97,7 +97,6 @@ class EdiromOpenseadragon extends HTMLElement {
      */
     static get observedAttributes() {
         return ['preserveviewport', 'clicktozoom', 'visibilityratio', 'minzoomlevel', 'maxzoomlevel', 'shownavigationcontrol', 'sequencemode', 'shownavigator', 'showzoomcontrol', 'showhomecontrol', 'showfullpagecontrol', 'showsequencecontrol', 'tilesources', 'pagenumber', 'zoom', 'rotation', 'triggerhome', 'triggerfullscreen', 'openseadragon-options', 'zones-data', 'zone'];
-        return ['preserveviewport', 'clicktozoom', 'visibilityratio', 'minzoomlevel', 'maxzoomlevel', 'shownavigationcontrol',  'sequencemode', 'shownavigator', 'showzoomcontrol', 'showhomecontrol', 'showfullpagecontrol', 'showsequencecontrol', 'tilesources', 'pagenumber', 'zoom', 'rotation', 'triggerhome', 'triggerfullscreen', 'openseadragon-options'];
     }
 
     /**
@@ -151,13 +150,7 @@ class EdiromOpenseadragon extends HTMLElement {
             }
         `;
         this.shadowRoot.appendChild(style);
-        
-        // Load OpenSeadragon CSS into shadow DOM
-        const cssLink = document.createElement('link');
-        cssLink.rel = 'stylesheet';
-        cssLink.href = 'https://unpkg.com/openseadragon@6.0.2/build/openseadragon/openseadragon.min.css';
-        this.shadowRoot.appendChild(cssLink);
-        
+
         console.log("Connected to DOM");
 
         // Inject stylesheet links so overlay styles (measures, annotations) work inside the shadow root
@@ -183,10 +176,6 @@ class EdiromOpenseadragon extends HTMLElement {
         // (scripts appended to shadow root do not execute)
         if (!document.getElementById('osd-script')) {
             const osdScript = document.createElement('script');
-            osdScript.src = "https://unpkg.com/openseadragon@6.0.2/build/openseadragon/openseadragon.min.js";
-            osdScript.defer = true;
-            document.head.appendChild(osdScript);
-            
             osdScript.id = 'osd-script';
             osdScript.src = "https://cdnjs.cloudflare.com/ajax/libs/openseadragon/4.1.1/openseadragon.min.js";
             osdScript.onload = () => {
@@ -372,7 +361,7 @@ class EdiromOpenseadragon extends HTMLElement {
             
             this.openSeaDragon = OpenSeadragon({
                 element: this.viewerDiv,
-                prefixUrl: 'https://unpkg.com/openseadragon@6.0.2/build/openseadragon/images/',
+                prefixUrl: 'https://cdnjs.cloudflare.com/ajax/libs/openseadragon/4.1.1/images/',
                 preserveViewport: this.preserveviewport === 'true',
                 visibilityRatio: parseFloat(this.visibilityratio) || 1.0,
                 minZoomLevel: parseFloat(this.minzoomlevel) || 0.5,
@@ -395,6 +384,10 @@ class EdiromOpenseadragon extends HTMLElement {
                 // causing blank pages on revisit (cached tiles trigger the failure
                 // before OSD's canvas-drawer fallback can schedule a redraw).
                 crossOriginPolicy: 'Anonymous',
+                // Performance and timeout settings
+                timeout: 120000, // Increase timeout to 120 seconds for slow servers
+                maxImageCacheCount: 200,
+                imageLoaderLimit: 2, // Limit concurrent tile requests to reduce server load
                 // Merge additional options from openseadragon-options attribute
                 ...this.options
             });
@@ -428,33 +421,6 @@ class EdiromOpenseadragon extends HTMLElement {
         } catch (error) {
             console.error('Error initializing OpenSeadragon:', error);
         }
-        this.openSeaDragon = OpenSeadragon({
-            element: this.shadowRoot.querySelector('#viewer'),
-            // Load the navigation control icons from the CDN that hosts the OSD library
-            prefixUrl: 'https://cdnjs.cloudflare.com/ajax/libs/openseadragon/4.1.1/images/',
-            preserveViewport: this.preserveviewport === 'true',
-            visibilityRatio: parseFloat(this.visibilityratio) || 1.0,
-            minZoomLevel: parseFloat(this.minzoomlevel) || 0.5,
-            defaultZoomLevel: parseFloat(this.defaultzoomlevel) || 1,
-            maxZoomLevel: parseFloat(this.maxzoomlevel) || 10,
-            showNavigationControl: this.shownavigationcontrol === 'true',
-            tileSources: tileSources,
-            showNavigator:  this.shownavigator === 'true',
-            showZoomControl:  this.showzoomcontrol === 'true',
-            showHomeControl:  this.showhomecontrol === 'true',
-            showFullPageControl:  this.showfullpagecontrol === 'true',
-            showSequenceControl:  this.showsequencecontrol === 'true',
-            sequenceMode: this.sequencemode === 'true',
-            gestureSettingsMouse: {
-              clickToZoom: this.clicktozoom === 'true',
-            },
-            // Performance and timeout settings
-            timeout: 120000, // Increase timeout to 120 seconds for slow servers
-            maxImageCacheCount: 200,
-            imageLoaderLimit: 2, // Limit concurrent tile requests to reduce server load
-            // Merge additional options from openseadragon-options attribute
-            ...this.options
-        });
     }
     
     /**
