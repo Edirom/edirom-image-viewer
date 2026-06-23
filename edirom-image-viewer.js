@@ -295,6 +295,8 @@ class EdiromOpenseadragon extends HTMLElement {
     initializeViewer(tileSources) {
         this.openSeaDragon = OpenSeadragon({
             element: this.shadowRoot.querySelector('#viewer'),
+            // Load the navigation control icons from the CDN that hosts the OSD library
+            prefixUrl: 'https://cdnjs.cloudflare.com/ajax/libs/openseadragon/4.1.1/images/',
             preserveViewport: this.preserveviewport === 'true',
             visibilityRatio: parseFloat(this.visibilityratio) || 1.0,
             minZoomLevel: parseFloat(this.minzoomlevel) || 0.5,
