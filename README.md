@@ -21,6 +21,7 @@ This web component displays IIIF images using the [OpenSeadragon](https://opense
     - **Zones** (`zones-data` / `zone`) — generic named regions.
     - **Measures** (`measures-data` / `measure`) — music measures/bars.
     - **Movements** (`mdivs-data` / `mdiv`) — MEI `<mdiv>` movements (page-level, optional region).
+- **Measure-Number Overlays** (`measure-numbers-data` / `show-measure-numbers`): Render labelled measure-number boxes on top of the current image, with a persistent show/hide toggle and hover highlighting.
 - **Rectangle Fit** (`fitrect`): Fit the viewport to an arbitrary image-pixel rectangle.
 - **View Mode** (`view-mode`): Declarative view-mode attribute that is recorded and re-broadcast for host code to react to.
 
@@ -112,6 +113,8 @@ This applies to `pagenumber` attribute and all page-related methods. The compone
 | `measure`                | string  | Key of the measure to navigate to (must exist in `measures-data`). Append `\|<nonce>` to re-fire navigation to the same measure. | `""` |
 | `mdivs-data`             | string  | JSON object mapping movement (`mdiv`) keys to objects `{ page }` (with optional region). Lookup map for `mdiv`. See [Region Navigation](#region-navigation). | `"{}"` |
 | `mdiv`                   | string  | Key of the movement to navigate to (must exist in `mdivs-data`). Append `\|<nonce>` to re-fire navigation to the same movement. | `""` |
+| `measure-numbers-data`   | string  | JSON array of measure-number overlay boxes. Each entry: `{ idPrefix, id, name, ulx, uly, lrx, lry }`. Rendered as labelled boxes on the current image. See [Measure Number Overlays](#measure-number-overlays). | `"[]"` |
+| `show-measure-numbers`   | boolean | Show/hide the rendered measure-number overlays. Toggles `visibility` without discarding `measure-numbers-data`; the last state persists across page changes. | `false` |
 | `fitrect`                | string  | Fit the viewport to an image-pixel rectangle `"x,y,width,height"`. An optional trailing `,<nonce>` token re-fires the same fit. | `""` |
 | `view-mode`              | string  | Declarative view mode (e.g. `pageBasedView` / `measureBasedView`). Recorded and re-broadcast via the `view-mode-changed` event for host code to react to. | `""` |
 
@@ -343,6 +346,51 @@ viewer.addEventListener('view-mode-changed', (event) => {
     console.log('View mode:', event.detail.viewMode);
 });
 ```
+
+## Measure Number Overlays
+
+In addition to *navigating* to measures (see [Region Navigation](#region-navigation)), the component can *render* labelled measure-number boxes directly on top of the current image. This uses a **push/persist model**: the host pushes the full set of boxes via `measure-numbers-data`, and toggles their visibility via `show-measure-numbers`. The component owns all rendering, showing, hiding and hover highlighting — the host never touches the DOM.
+
+### Data Format
+
+`measure-numbers-data` is a JSON **array** of overlay descriptors. Each entry defines one box in image-pixel coordinates:
+
+```json
+[
+  { "idPrefix": "viewer1", "id": "m1", "name": "1", "ulx": 100, "uly": 100, "lrx": 200, "lry": 300 },
+  { "idPrefix": "viewer1", "id": "m2", "name": "2", "ulx": 220, "uly": 100, "lrx": 320, "lry": 300 }
+]
+```
+
+| Field      | Description |
+|------------|-------------|
+| `idPrefix` | Prefix used (with `id`) to build the overlay's unique DOM id. |
+| `id`       | Measure id, combined with `idPrefix` into `idPrefix_id`. |
+| `name`     | Label shown inside the box (the measure number). An empty `name` is rendered with an "empty" style. |
+| `ulx`,`uly`| Upper-left corner of the box, in image pixels. |
+| `lrx`,`lry`| Lower-right corner of the box (box size is `lrx-ulx` × `lry-uly`). |
+
+### Persistent Show/Hide
+
+`show-measure-numbers` toggles the overlays' `visibility` (not `display`), so the pushed data is never discarded. The component remembers the last state and re-applies it to every freshly rendered page, so toggling once persists across page navigation until toggled again. Pushing a new `measure-numbers-data` re-renders the boxes and re-applies the current visibility.
+
+```javascript
+const viewer = document.querySelector('edirom-image-viewer');
+
+// Push the measure boxes for the current page
+viewer.setAttribute('measure-numbers-data', JSON.stringify([
+    { idPrefix: 'viewer1', id: 'm1', name: '1', ulx: 100, uly: 100, lrx: 200, lry: 300 },
+    { idPrefix: 'viewer1', id: 'm2', name: '2', ulx: 220, uly: 100, lrx: 320, lry: 300 }
+]));
+
+// Show them
+viewer.setAttribute('show-measure-numbers', 'true');
+
+// Hide them (data is kept, just hidden)
+viewer.setAttribute('show-measure-numbers', 'false');
+```
+
+> **Note:** `measure-numbers-data` / `show-measure-numbers` (overlay *rendering*) are independent of `measures-data` / `measure` (region *navigation*). They can be used together or separately.
 
 ## Browser Support
 
