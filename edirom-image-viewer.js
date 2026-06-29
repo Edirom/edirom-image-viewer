@@ -111,11 +111,34 @@ class EdiromOpenseadragon extends HTMLElement {
         this._annotationContainers = {};
 
         /**
+         * @type {Array<Object>} Flat list of every rendered annotation badge,
+         * each entry { element, containerId, categories, priority }. Used by
+         * the category/priority filter so badges can be shown/hidden
+         * individually without re-pushing or re-rendering annotations-data.
+         */
+        this._annotationBadges = [];
+
+        /**
          * @type {boolean} Whether annotation overlays are currently visible.
          * Toggled via the `show-annotations` attribute without discarding the
          * pushed annotations-data, so show/hide is a pure visibility switch.
          */
         this._showAnnotations = false;
+
+        /**
+         * @type {?Array<string>} Currently visible annotation category ids,
+         * pushed via the `visible-categories` attribute. null means "no filter
+         * pushed yet" (show all); ['undefined'] means the edition has no
+         * category taxonomy (show all); an empty array hides everything.
+         */
+        this._visibleCategories = null;
+
+        /**
+         * @type {?Array<string>} Currently visible annotation priority ids,
+         * pushed via the `visible-priorities` attribute. Same null / ['undefined']
+         * / empty semantics as `_visibleCategories`.
+         */
+        this._visiblePriorities = null;
 
         /**
          * @type {Array<Object>} Measure-number overlay data pushed via the
@@ -157,7 +180,7 @@ class EdiromOpenseadragon extends HTMLElement {
      * @returns {Array<string>} The list of observed attributes.
      */
     static get observedAttributes() {
-        return ['preserveviewport', 'clicktozoom', 'minzoomlevel', 'maxzoomlevel', 'shownavigationcontrol', 'sequencemode', 'shownavigator', 'showzoomcontrol', 'showhomecontrol', 'showfullpagecontrol', 'showsequencecontrol', 'tilesources', 'pagenumber', 'zoom', 'rotation', 'triggerhome', 'triggerfullscreen', 'openseadragon-options', 'zones-data', 'zone', 'measures-data', 'measure', 'mdivs-data', 'mdiv', 'annotations-data', 'show-annotations', 'measure-numbers-data', 'show-measure-numbers', 'fitrect', 'view-mode'];
+        return ['preserveviewport', 'clicktozoom', 'minzoomlevel', 'maxzoomlevel', 'shownavigationcontrol', 'sequencemode', 'shownavigator', 'showzoomcontrol', 'showhomecontrol', 'showfullpagecontrol', 'showsequencecontrol', 'tilesources', 'pagenumber', 'zoom', 'rotation', 'triggerhome', 'triggerfullscreen', 'openseadragon-options', 'zones-data', 'zone', 'measures-data', 'measure', 'mdivs-data', 'mdiv', 'annotations-data', 'show-annotations', 'visible-categories', 'visible-priorities', 'measure-numbers-data', 'show-measure-numbers', 'fitrect', 'view-mode'];
     }
 
     /**
@@ -412,6 +435,33 @@ class EdiromOpenseadragon extends HTMLElement {
             case 'show-annotations':
                 this._showAnnotations = String(newPropertyValue) !== 'false';
                 this._applyAnnotationVisibility();
+                break;
+
+            // Category/priority filter (push model). The host pushes the set of
+            // currently visible category ids / priority ids as JSON arrays when
+            // the user toggles the annotation filter menus. The component hides
+            // badges that match neither, without re-pushing annotations-data,
+            // and re-applies the filter to every freshly rendered page.
+            case 'visible-categories':
+                try {
+                    this._visibleCategories = JSON.parse(newPropertyValue);
+                } catch (e) {
+                    console.error('Invalid visible-categories JSON:', e);
+                    this._visibleCategories = null;
+                }
+                this._applyAnnotationVisibility();
+                this._emitAnnotationFilterChanged();
+                break;
+
+            case 'visible-priorities':
+                try {
+                    this._visiblePriorities = JSON.parse(newPropertyValue);
+                } catch (e) {
+                    console.error('Invalid visible-priorities JSON:', e);
+                    this._visiblePriorities = null;
+                }
+                this._applyAnnotationVisibility();
+                this._emitAnnotationFilterChanged();
                 break;
 
             // Measure-number overlays (push model, like annotations-data). The
@@ -889,6 +939,38 @@ class EdiromOpenseadragon extends HTMLElement {
             me.removeOverlay(containerId);
         });
         this._annotationContainers = {};
+        this._annotationBadges = [];
+    }
+
+    /**
+     * Returns whether a token list (an annotation's category or priority ids)
+     * passes a pushed filter list.
+     *  - filter null  -> no filter pushed yet -> show all
+     *  - filter ['undefined'] -> edition has no such taxonomy -> show all
+     *  - filter []    -> everything unchecked -> hide all
+     *  - otherwise    -> visible if any token is in the filter list
+     * Mirrors the host's legacy annotationFilterChanged semantics.
+     * @private
+     */
+    _matchesFilterList(filter, tokens) {
+        if (!Array.isArray(filter)) return true;
+        if (filter.length === 1 && filter[0] === 'undefined') return true;
+        for (let i = 0; i < tokens.length; i++) {
+            if (filter.indexOf(tokens[i]) !== -1) return true;
+        }
+        return false;
+    }
+
+    /**
+     * Whether a single annotation badge passes the current category AND
+     * priority filters.
+     * @private
+     */
+    _annotationMatchesFilter(categories, priority) {
+        const catTokens = String(categories || '').split(/\s+/).filter(Boolean);
+        const prioTokens = String(priority || '').split(/\s+/).filter(Boolean);
+        return this._matchesFilterList(this._visibleCategories, catTokens)
+            && this._matchesFilterList(this._visiblePriorities, prioTokens);
     }
 
     /**
@@ -902,12 +984,56 @@ class EdiromOpenseadragon extends HTMLElement {
      * touch `visibility`, so the hide sticks.
      * @private
      */
+    /**
+     * Shows or hides annotation overlays according to both the global
+     * `show-annotations` state and the per-badge category/priority filter.
+     *
+     * Each badge is shown/hidden individually via `display` (a container can
+     * stack badges from different annotations), and a container is made visible
+     * only when annotations are on AND it still has at least one badge that
+     * passes the filter. Used by `show-annotations`, `visible-categories` and
+     * `visible-priorities`, and re-applied after every page render so the
+     * chosen state persists across pages.
+     *
+     * NOTE: container visibility toggles `visibility`, not `display`, because
+     * OpenSeadragon re-applies `display:block` to every overlay on each redraw
+     * (which would override a `display:none` hide) but never touches
+     * `visibility`.
+     * @private
+     */
     _applyAnnotationVisibility() {
-        const value = this._showAnnotations ? '' : 'hidden';
+        const me = this;
+        const show = this._showAnnotations;
         const containers = this._annotationContainers;
-        Object.keys(containers).forEach(function (containerId) {
-            containers[containerId].style.visibility = value;
+        const containerHasVisible = {};
+
+        (this._annotationBadges || []).forEach(function (rec) {
+            const match = me._annotationMatchesFilter(rec.categories, rec.priority);
+            rec.element.style.display = match ? '' : 'none';
+            if (match) containerHasVisible[rec.containerId] = true;
         });
+
+        Object.keys(containers).forEach(function (containerId) {
+            const visible = show && containerHasVisible[containerId];
+            containers[containerId].style.visibility = visible ? '' : 'hidden';
+        });
+    }
+
+    /**
+     * Notifies the host that the active category/priority filter changed, so it
+     * can keep its filter menu checkboxes in sync. Fired whenever the
+     * `visible-categories` or `visible-priorities` attribute changes (including
+     * when set externally, e.g. via DevTools). The detail carries the current
+     * filter arrays (null = no filter / show all).
+     * @private
+     */
+    _emitAnnotationFilterChanged() {
+        this.dispatchEvent(new CustomEvent('annotation-filter-changed', {
+            detail: {
+                visibleCategories: this._visibleCategories,
+                visiblePriorities: this._visiblePriorities
+            }
+        }));
     }
 
     /**
@@ -960,6 +1086,14 @@ class EdiromOpenseadragon extends HTMLElement {
                 badge.title = name;
                 badge.setAttribute('data-edirom-annot-id', annoId);
                 container.appendChild(badge);
+
+                // track the badge so the category/priority filter can toggle it
+                me._annotationBadges.push({
+                    element: badge,
+                    containerId: containerId,
+                    categories: categories,
+                    priority: priority
+                });
 
                 const detail = { id: annoId, uri: uri, fn: fn, title: name, element: badge };
 

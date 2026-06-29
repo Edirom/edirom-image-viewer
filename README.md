@@ -22,6 +22,7 @@ This web component displays IIIF images using the [OpenSeadragon](https://opense
     - **Measures** (`measures-data` / `measure`) — music measures/bars.
     - **Movements** (`mdivs-data` / `mdiv`) — MEI `<mdiv>` movements (page-level, optional region).
 - **Measure-Number Overlays** (`measure-numbers-data` / `show-measure-numbers`): Render labelled measure-number boxes on top of the current image, with a persistent show/hide toggle and hover highlighting.
+- **Annotation Overlays** (`annotations-data` / `show-annotations`): Render clickable annotation badges on top of the current image, with a persistent show/hide toggle and category/priority filtering (`visible-categories` / `visible-priorities`).
 - **Rectangle Fit** (`fitrect`): Fit the viewport to an arbitrary image-pixel rectangle.
 - **View Mode** (`view-mode`): Declarative view-mode attribute that is recorded and re-broadcast for host code to react to.
 
@@ -113,6 +114,10 @@ This applies to `pagenumber` attribute and all page-related methods. The compone
 | `measure`                | string  | Key of the measure to navigate to (must exist in `measures-data`). Append `\|<nonce>` to re-fire navigation to the same measure. | `""` |
 | `mdivs-data`             | string  | JSON object mapping movement (`mdiv`) keys to objects `{ page }` (with optional region). Lookup map for `mdiv`. See [Region Navigation](#region-navigation). | `"{}"` |
 | `mdiv`                   | string  | Key of the movement to navigate to (must exist in `mdivs-data`). Append `\|<nonce>` to re-fire navigation to the same movement. | `""` |
+| `annotations-data`       | string  | JSON array of annotation overlays. Each entry: `{ idPrefix, id, title, uri, categories, priority, fn, plist }`, where `plist` is an array of image-pixel regions `{ id, ulx, uly, lrx, lry, type }`. Rendered as clickable badges. See [Annotation Overlays](#annotation-overlays). | `"[]"` |
+| `show-annotations`       | boolean | Show/hide the rendered annotation overlays. Toggles `visibility` without discarding `annotations-data`; the last state persists across page changes. | `false` |
+| `visible-categories`     | string  | JSON array of category ids that should remain visible. `["undefined"]` (no category taxonomy) or absent shows all; `[]` hides all; otherwise a badge is shown only if one of its categories is listed. See [Annotation Overlays](#annotation-overlays). | `null` |
+| `visible-priorities`     | string  | JSON array of priority ids that should remain visible. Same `["undefined"]` / `[]` / list semantics as `visible-categories`. A badge is shown only when it passes **both** filters. | `null` |
 | `measure-numbers-data`   | string  | JSON array of measure-number overlay boxes. Each entry: `{ idPrefix, id, name, ulx, uly, lrx, lry }`. Rendered as labelled boxes on the current image. See [Measure Number Overlays](#measure-number-overlays). | `"[]"` |
 | `show-measure-numbers`   | boolean | Show/hide the rendered measure-number overlays. Toggles `visibility` without discarding `measure-numbers-data`; the last state persists across page changes. | `false` |
 | `fitrect`                | string  | Fit the viewport to an image-pixel rectangle `"x,y,width,height"`. An optional trailing `,<nonce>` token re-fires the same fit. | `""` |
@@ -391,6 +396,56 @@ viewer.setAttribute('show-measure-numbers', 'false');
 ```
 
 > **Note:** `measure-numbers-data` / `show-measure-numbers` (overlay *rendering*) are independent of `measures-data` / `measure` (region *navigation*). They can be used together or separately.
+
+## Annotation Overlays
+
+The component renders clickable **annotation badges** on top of the current image using the same **push/persist model** as the measure-number overlays: the host pushes the full set of annotations via `annotations-data`, toggles their visibility via `show-annotations`, and narrows them down by category/priority via `visible-categories` / `visible-priorities`. The component owns all rendering, showing, hiding and filtering — the host never touches the DOM.
+
+### `annotations-data` format
+
+`annotations-data` is a JSON **array** of annotation descriptors. Annotations pointing at the same region share one stacked container, and each badge carries the CSS classes `annotIcon {categories} {priority} {type}` so edition stylesheets can target them:
+
+```js
+viewer.setAttribute('annotations-data', JSON.stringify([
+    {
+        idPrefix: 'viewer1',
+        id: 'annot1',
+        title: 'Slur added',
+        uri: 'xmldb:exist:///db/.../annot1.xml',
+        categories: 'wega.annotation.category.bogensetzung',
+        priority: 'ediromAnnotPrio1',
+        fn: '',                       // host click action (opaque to the component)
+        plist: [                      // one or more image-pixel regions
+            { id: 'm1', ulx: 100, uly: 100, lrx: 160, lry: 160, type: 'measure' }
+        ]
+    }
+]));
+
+viewer.setAttribute('show-annotations', 'true');
+```
+
+Each badge dispatches `annotation-click`, `annotation-mouseenter` and `annotation-mouseleave` CustomEvents (with `detail = { id, uri, fn, title, element }`) that the host uses for its tooltip / click / highlight behaviour.
+
+### Category & priority filtering
+
+`visible-categories` and `visible-priorities` are JSON arrays of the category / priority ids that should remain visible. A badge is shown only when it passes **both** filters (one of its categories is listed **and** its priority is listed). The sentinel values mirror the host's filter menus:
+
+| Value | Meaning |
+| --- | --- |
+| absent / `null` | no filter pushed yet — show all |
+| `["undefined"]` | the edition has no such taxonomy — show all |
+| `[]` | every item unchecked — hide all |
+| `["catA", "catB"]` | show only badges whose category/priority is listed |
+
+```js
+// show only the "bogensetzung" category, any priority
+viewer.setAttribute('visible-categories', JSON.stringify(['wega.annotation.category.bogensetzung']));
+viewer.setAttribute('visible-priorities', JSON.stringify(['undefined']));
+```
+
+Filtering hides individual badges via `display`, and a stacked container is hidden once none of its badges pass the filter. Both `show-annotations` and the filters toggle `visibility` (not `display`) at the container level so OpenSeadragon redraws don't override the hide. The chosen show/hide state and filter are remembered and re-applied to every freshly rendered page, so they persist across page navigation until changed.
+
+Whenever `visible-categories` or `visible-priorities` changes (including when set externally, e.g. via DevTools), the component dispatches an `annotation-filter-changed` CustomEvent with `detail = { visibleCategories, visiblePriorities }` (the current filter arrays, or `null` for "no filter"). The host can listen for it to keep its own filter UI (e.g. menu checkboxes) in sync with the component's state.
 
 ## Browser Support
 
