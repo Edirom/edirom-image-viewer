@@ -119,6 +119,20 @@ class EdiromOpenseadragon extends HTMLElement {
         this._annotationBadges = [];
 
         /**
+         * @type {?HTMLElement} The single reusable annotation tooltip element
+         * rendered in the shadow DOM. The host preloads each annotation's
+         * server-rendered tooltip HTML into the `tooltip` field of
+         * annotations-data, and the component renders/positions it on hover.
+         */
+        this._annotTipEl = null;
+
+        /**
+         * @type {?number} Pending hide timer for the annotation tooltip, used
+         * to add a short grace period so the pointer can travel into the tip.
+         */
+        this._annotTipHideTimer = null;
+
+        /**
          * @type {boolean} Whether annotation overlays are currently visible.
          * Toggled via the `show-annotations` attribute without discarding the
          * pushed annotations-data, so show/hide is a pure visibility switch.
@@ -940,6 +954,82 @@ class EdiromOpenseadragon extends HTMLElement {
         });
         this._annotationContainers = {};
         this._annotationBadges = [];
+        // hide any tooltip left over from the previous page's annotations
+        if (this._annotTipHideTimer) { clearTimeout(this._annotTipHideTimer); this._annotTipHideTimer = null; }
+        if (this._annotTipEl) this._annotTipEl.style.display = 'none';
+    }
+
+    /**
+     * Lazily creates the single reusable annotation tooltip element and appends
+     * it to the viewer container. The tooltip stays open while the pointer is
+     * over it (so links inside it remain clickable) and hides on mouseleave.
+     * @private
+     */
+    _ensureAnnotationTooltip() {
+        const me = this;
+        if (this._annotTipEl) return this._annotTipEl;
+        const tip = document.createElement('div');
+        tip.className = 'edirom-annotation-tip annotationTip';
+        tip.style.position = 'absolute';
+        tip.style.zIndex = '1000';
+        tip.style.display = 'none';
+        tip.style.maxWidth = '300px';
+        tip.style.maxHeight = '300px';
+        tip.style.overflow = 'auto';
+        tip.addEventListener('mouseenter', function () {
+            if (me._annotTipHideTimer) { clearTimeout(me._annotTipHideTimer); me._annotTipHideTimer = null; }
+        });
+        tip.addEventListener('mouseleave', function () { me._hideAnnotationTooltip(); });
+        (this.viewerDiv || this.shadowRoot).appendChild(tip);
+        this._annotTipEl = tip;
+        return tip;
+    }
+
+    /**
+     * Shows the annotation tooltip for a badge, rendering the host-supplied
+     * HTML and positioning it next to the badge within the viewer container.
+     * @private
+     */
+    _showAnnotationTooltip(badge, html) {
+        if (!html) return;
+        if (this._annotTipHideTimer) { clearTimeout(this._annotTipHideTimer); this._annotTipHideTimer = null; }
+        const tip = this._ensureAnnotationTooltip();
+        tip.innerHTML = html;
+        tip.style.display = 'block';
+
+        const host = this.viewerDiv || this.shadowRoot;
+        const hostRect = host.getBoundingClientRect();
+        const badgeRect = badge.getBoundingClientRect();
+
+        // default: to the right of the badge; flip to the left if it overflows
+        let left = badgeRect.right - hostRect.left + 8;
+        if (left + tip.offsetWidth > host.clientWidth) {
+            left = badgeRect.left - hostRect.left - tip.offsetWidth - 8;
+        }
+        if (left < 0) left = 4;
+
+        let top = badgeRect.top - hostRect.top;
+        if (top + tip.offsetHeight > host.clientHeight) {
+            top = host.clientHeight - tip.offsetHeight - 4;
+        }
+        if (top < 0) top = 4;
+
+        tip.style.left = left + 'px';
+        tip.style.top = top + 'px';
+    }
+
+    /**
+     * Hides the annotation tooltip after a short grace period so the pointer
+     * can travel from the badge into the tooltip without it disappearing.
+     * @private
+     */
+    _hideAnnotationTooltip() {
+        const me = this;
+        if (this._annotTipHideTimer) clearTimeout(this._annotTipHideTimer);
+        this._annotTipHideTimer = setTimeout(function () {
+            if (me._annotTipEl) me._annotTipEl.style.display = 'none';
+            me._annotTipHideTimer = null;
+        }, 300);
     }
 
     /**
@@ -1043,8 +1133,10 @@ class EdiromOpenseadragon extends HTMLElement {
      * `idPrefix_measureId + annoId` and the class `annotIcon {categories}
      * {priority} {partType}` so the host's filter / lookup helpers keep working.
      * Each badge fires `annotation-click` / `annotation-mouseenter` /
-     * `annotation-mouseleave` CustomEvents the host listens to for its
-     * ExtJS-specific tooltip / click / highlight behaviour.
+     * `annotation-mouseleave` CustomEvents. The component renders the hover
+     * tooltip itself from each annotation's host-supplied `tooltip` HTML; the
+     * host only listens to `annotation-click` for its ExtJS-specific click
+     * action.
      * @private
      */
     _renderAnnotations() {
@@ -1060,6 +1152,7 @@ class EdiromOpenseadragon extends HTMLElement {
             const categories = annotation.categories || '';
             const priority = annotation.priority || '';
             const fn = annotation.fn || '';
+            const tooltip = annotation.tooltip || '';
             const plist = Array.isArray(annotation.plist) ? annotation.plist : [];
 
             plist.forEach(function (shape) {
@@ -1108,9 +1201,11 @@ class EdiromOpenseadragon extends HTMLElement {
                     me.dispatchEvent(new CustomEvent('annotation-click', { detail: detail }));
                 });
                 badge.addEventListener('mouseenter', function () {
+                    me._showAnnotationTooltip(badge, tooltip);
                     me.dispatchEvent(new CustomEvent('annotation-mouseenter', { detail: detail }));
                 });
                 badge.addEventListener('mouseleave', function () {
+                    me._hideAnnotationTooltip();
                     me.dispatchEvent(new CustomEvent('annotation-mouseleave', { detail: detail }));
                 });
             });
