@@ -22,7 +22,7 @@ This web component displays IIIF images using the [OpenSeadragon](https://opense
     - **Measures** (`measures-data` / `measure`) — music measures/bars.
     - **Movements** (`mdivs-data` / `mdiv`) — MEI `<mdiv>` movements (page-level, optional region).
 - **Measure-Number Overlays** (`measure-numbers-data` / `show-measure-numbers`): Render labelled measure-number boxes on top of the current image, with a persistent show/hide toggle and hover highlighting.
-- **Annotation Overlays** (`annotations-data` / `show-annotations`): Render clickable annotation badges on top of the current image, with a persistent show/hide toggle and category/priority filtering (`visible-categories` / `visible-priorities`).
+- **Annotation Overlays** (`annotations-data` / `show-annotations`): Render clickable annotation badges on top of the current image, with a persistent show/hide toggle, category/priority filtering (`visible-categories` / `visible-priorities`), and component-rendered hover tooltips (host-supplied HTML via the `tooltip` field).
 - **Rectangle Fit** (`fitrect`): Fit the viewport to an arbitrary image-pixel rectangle.
 - **View Mode** (`view-mode`): Declarative view-mode attribute that is recorded and re-broadcast for host code to react to.
 
@@ -114,7 +114,7 @@ This applies to `pagenumber` attribute and all page-related methods. The compone
 | `measure`                | string  | Key of the measure to navigate to (must exist in `measures-data`). Append `\|<nonce>` to re-fire navigation to the same measure. | `""` |
 | `mdivs-data`             | string  | JSON object mapping movement (`mdiv`) keys to objects `{ page }` (with optional region). Lookup map for `mdiv`. See [Region Navigation](#region-navigation). | `"{}"` |
 | `mdiv`                   | string  | Key of the movement to navigate to (must exist in `mdivs-data`). Append `\|<nonce>` to re-fire navigation to the same movement. | `""` |
-| `annotations-data`       | string  | JSON array of annotation overlays. Each entry: `{ idPrefix, id, title, uri, categories, priority, fn, plist }`, where `plist` is an array of image-pixel regions `{ id, ulx, uly, lrx, lry, type }`. Rendered as clickable badges. See [Annotation Overlays](#annotation-overlays). | `"[]"` |
+| `annotations-data`       | string  | JSON array of annotation overlays. Each entry: `{ idPrefix, id, title, uri, categories, priority, fn, tooltip, plist }`, where `tooltip` is optional host-supplied HTML rendered by the component on hover and `plist` is an array of image-pixel regions `{ id, ulx, uly, lrx, lry, type }`. Rendered as clickable badges. See [Annotation Overlays](#annotation-overlays). | `"[]"` |
 | `show-annotations`       | boolean | Show/hide the rendered annotation overlays. Toggles `visibility` without discarding `annotations-data`; the last state persists across page changes. | `false` |
 | `visible-categories`     | string  | JSON array of category ids that should remain visible. `["undefined"]` (no category taxonomy) or absent shows all; `[]` hides all; otherwise a badge is shown only if one of its categories is listed. See [Annotation Overlays](#annotation-overlays). | `null` |
 | `visible-priorities`     | string  | JSON array of priority ids that should remain visible. Same `["undefined"]` / `[]` / list semantics as `visible-categories`. A badge is shown only when it passes **both** filters. | `null` |
@@ -250,6 +250,9 @@ The component also fires dedicated semantic events:
 | `view-mode-changed`  | `{ viewMode }`               | The `view-mode` attribute changes. |
 | `zoom`               | `{ zoom }`                   | The OpenSeadragon viewport zoom changes. |
 | `image-ready`        | —                            | The image/tiles have finished loading. |
+| `annotation-click`   | `{ id, uri, fn, title, element }` | An annotation badge is clicked. |
+| `annotation-mouseenter` / `annotation-mouseleave` | `{ id, uri, fn, title, element }` | The pointer enters/leaves an annotation badge. |
+| `annotation-filter-changed` | `{ visibleCategories, visiblePriorities }` | `visible-categories` or `visible-priorities` changes (incl. externally). |
 
 ```javascript
 viewer.addEventListener('page-changed', (event) => {
@@ -415,6 +418,7 @@ viewer.setAttribute('annotations-data', JSON.stringify([
         categories: 'wega.annotation.category.bogensetzung',
         priority: 'ediromAnnotPrio1',
         fn: '',                       // host click action (opaque to the component)
+        tooltip: '<div class="annotTip">…host-supplied HTML…</div>', // rendered by the component on hover
         plist: [                      // one or more image-pixel regions
             { id: 'm1', ulx: 100, uly: 100, lrx: 160, lry: 160, type: 'measure' }
         ]
@@ -424,7 +428,7 @@ viewer.setAttribute('annotations-data', JSON.stringify([
 viewer.setAttribute('show-annotations', 'true');
 ```
 
-Each badge dispatches `annotation-click`, `annotation-mouseenter` and `annotation-mouseleave` CustomEvents (with `detail = { id, uri, fn, title, element }`) that the host uses for its tooltip / click / highlight behaviour.
+Each badge dispatches `annotation-click`, `annotation-mouseenter` and `annotation-mouseleave` CustomEvents (with `detail = { id, uri, fn, title, element }`). The host uses `annotation-click` (via the opaque `fn`) for its click behaviour. The **tooltip is rendered by the component itself**: if an annotation carries a `tooltip` HTML string, the component shows it in a positioned, reusable tooltip element on hover and hides it on leave — the host only supplies the HTML (and may still listen to the mouse events for its own highlighting).
 
 ### Category & priority filtering
 
