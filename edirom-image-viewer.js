@@ -680,6 +680,19 @@ class EdiromOpenseadragon extends HTMLElement {
             });
             console.log('OpenSeadragon viewer initialized successfully:', this.openSeaDragon);
 
+            // OpenSeadragon's built-in full-page mode reparents the viewer
+            // element to <body> and hides the other body children. That breaks
+            // inside a shadow DOM: the viewer is torn out of its host/styles and
+            // the surrounding layout collapses (only page chrome like a header /
+            // footer outside the hidden container survives). Redirect OSD's own
+            // full-page button — and our public toggle — to the standard
+            // Fullscreen API on the component host, which works in shadow DOM.
+            this.openSeaDragon.isFullPage = () => this.isFullScreen();
+            this.openSeaDragon.setFullScreen = (fullScreen) => {
+                this.setFullScreen(fullScreen);
+                return this.openSeaDragon;
+            };
+
             // Re-dispatch OSD zoom changes as a DOM event so host apps can
             // react without reaching into the underlying OpenSeadragon instance.
             this.openSeaDragon.addHandler('zoom', (event) => {
@@ -836,20 +849,35 @@ class EdiromOpenseadragon extends HTMLElement {
     }
     
     // Full screen methods
+    //
+    // Use the standard Fullscreen API on the component host element rather than
+    // OpenSeadragon's built-in full-page mode. OSD's full-page reparents the
+    // viewer to <body> and hides sibling nodes, which blanks the page when the
+    // viewer lives inside a shadow DOM. Going fullscreen on the host keeps the
+    // whole component (viewer + overlays) intact and correctly styled.
     setFullScreen(fullScreen) {
-        if(this.openSeaDragon) {
-            this.openSeaDragon.setFullScreen(fullScreen);
+        if (fullScreen) {
+            const request = this.requestFullscreen
+                || this.webkitRequestFullscreen
+                || this.msRequestFullscreen;
+            if (request) request.call(this);
+        } else if (this.isFullScreen()) {
+            const exit = document.exitFullscreen
+                || document.webkitExitFullscreen
+                || document.msExitFullscreen;
+            if (exit) exit.call(document);
         }
     }
-    
+
     toggleFullScreen() {
-        if(this.openSeaDragon) {
-            this.openSeaDragon.setFullScreen(!this.openSeaDragon.isFullPage());
-        }
+        this.setFullScreen(!this.isFullScreen());
     }
-    
+
     isFullScreen() {
-        return this.openSeaDragon ? this.openSeaDragon.isFullPage() : false;
+        const fsElement = document.fullscreenElement
+            || document.webkitFullscreenElement
+            || document.msFullscreenElement;
+        return fsElement === this;
     }
     
     // Rotation methods
