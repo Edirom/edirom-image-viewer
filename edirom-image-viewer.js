@@ -340,6 +340,19 @@ class EdiromOpenseadragon extends HTMLElement {
             // handle tileSources property change
             case 'tilesources':
                 this.displayOpenSeadragon();
+                // Announce the new page total ONLY when the tile sources actually
+                // change (not on the viewer recreations triggered by sequencemode
+                // or control-visibility toggles, which reuse the current/stale
+                // sources). Fire only for a real, non-empty, changed count so a
+                // transient empty/rebuild state never resets host pagination.
+                try {
+                    const parsedSources = JSON.parse(newPropertyValue);
+                    const total = Array.isArray(parsedSources) ? parsedSources.length : 1;
+                    if (total > 0 && total !== this._lastAnnouncedTotal) {
+                        this._lastAnnouncedTotal = total;
+                        this._fireTotalPagesChanged(total);
+                    }
+                } catch (e) { /* invalid tilesources JSON: nothing to announce */ }
                 break;
             
             case 'pagenumber':
@@ -633,7 +646,7 @@ class EdiromOpenseadragon extends HTMLElement {
         try {
             // Store the tile sources count
             this.totalTileSources = Array.isArray(tileSources) ? tileSources.length : 1;
-            
+
             this.openSeaDragon = OpenSeadragon({
                 element: this.viewerDiv,
                 prefixUrl: 'https://cdnjs.cloudflare.com/ajax/libs/openseadragon/4.1.1/images/',
@@ -807,7 +820,12 @@ class EdiromOpenseadragon extends HTMLElement {
     }
     
     getTotalPages() {
-        return this.openSeaDragon ? this.openSeaDragon.world.getItemCount() : 0;
+        if (!this.openSeaDragon) return 0;
+        // In sequence mode OpenSeadragon keeps only the current image in `world`
+        // (getItemCount() === 1), so the authoritative total is the number of
+        // configured tile sources. Mirror the bound check used by goToPage().
+        return this.openSeaDragon.tileSources ?
+            this.openSeaDragon.tileSources.length : this.openSeaDragon.world.getItemCount();
     }
     
     // Home/reset view
@@ -1442,6 +1460,19 @@ class EdiromOpenseadragon extends HTMLElement {
     _firePageChanged(pageNumber) {
         this.dispatchEvent(new CustomEvent('page-changed', {
             detail: { pageNumber },
+            bubbles: true
+        }));
+    }
+
+    /**
+     * Dispatches a `total-pages-changed` event whenever the set of tile sources
+     * changes, so host pagination (page spinner bounds, "page X of Y" labels)
+     * can resync to the new total.
+     * @param {number} totalPages - The new total number of pages (tile sources).
+     */
+    _fireTotalPagesChanged(totalPages) {
+        this.dispatchEvent(new CustomEvent('total-pages-changed', {
+            detail: { totalPages },
             bubbles: true
         }));
     }
