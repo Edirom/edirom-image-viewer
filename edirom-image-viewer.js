@@ -251,12 +251,17 @@ class EdiromOpenseadragon extends HTMLElement {
 
         console.log("Connected to DOM");
 
-        // Inject the overlay stylesheet (measures, annotations) into the shadow root.
-        // todo.css is NOT injected here: it is the app's general main-document
-        // stylesheet and the only rules of it that reached this shadow root
-        // (.measure base styling) now live in annotation-style.css.
+        // Inject the overlay stylesheets into the shadow root, since main-document
+        // class rules do not cross the shadow boundary:
+        //   - annotation-style.css : per-category annotIcon glyph rules
+        //   - font-awesome.min.css : FontAwesome icon rules used by some annotIcons
+        // The Bravura / FontAwesome @font-face declarations are NOT duplicated here:
+        // @font-face is resolved document-wide, so the fonts registered by the main
+        // page (theme bundle + font-awesome.min.css) are usable by shadow content.
+        // That keeps annotation-style.css identical to develop (no font/.hidden dups).
         const cssFiles = [
-            'resources/css/annotation-style.css'
+            'resources/css/annotation-style.css',
+            'resources/css/font-awesome.min.css'
         ];
         cssFiles.forEach(href => {
             const link = document.createElement('link');
