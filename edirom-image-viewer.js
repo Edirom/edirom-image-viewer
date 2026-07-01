@@ -464,10 +464,25 @@ class EdiromOpenseadragon extends HTMLElement {
             // without discarding their data. "true" (or absent value) shows
             // them, "false" hides them. Separate from annotations-data so the
             // host can show/hide repeatedly without re-pushing the data.
-            case 'show-annotations':
-                this._showAnnotations = String(newPropertyValue) !== 'false';
+            case 'show-annotations': {
+                const nextShowAnnotations = String(newPropertyValue) !== 'false';
+                const annotationsChanged = this._showAnnotations !== nextShowAnnotations;
+                this._showAnnotations = nextShowAnnotations;
                 this._applyAnnotationVisibility();
+                // Announce the new visibility ONLY when it actually changed, so
+                // the host can keep its toolbar toggle button in sync, regardless
+                // of how the attribute was changed (button, API or direct edit).
+                // Skipping no-op sets is important: setAttribute fires this
+                // callback even when the value is unchanged, and a spurious
+                // event would clobber an in-progress host toggle.
+                if (annotationsChanged) {
+                    this.dispatchEvent(new CustomEvent('show-annotations-changed', {
+                        detail: { show: this._showAnnotations },
+                        bubbles: true
+                    }));
+                }
                 break;
+            }
 
             // Category/priority filter (push model). The host pushes the set of
             // currently visible category ids / priority ids as JSON arrays when
@@ -512,10 +527,23 @@ class EdiromOpenseadragon extends HTMLElement {
             // Toggle the visibility of the already-rendered measure-number
             // overlays without discarding their data. "true" shows them,
             // "false" hides them.
-            case 'show-measure-numbers':
-                this._showMeasureNumbers = String(newPropertyValue) !== 'false';
+            case 'show-measure-numbers': {
+                const nextShowMeasures = String(newPropertyValue) !== 'false';
+                const measuresChanged = this._showMeasureNumbers !== nextShowMeasures;
+                this._showMeasureNumbers = nextShowMeasures;
                 this._applyMeasureNumberVisibility();
+                // Announce the new visibility ONLY when it actually changed (see
+                // the show-annotations case): setAttribute fires this callback
+                // even for no-op sets, and a spurious event would clobber an
+                // in-progress host toggle.
+                if (measuresChanged) {
+                    this.dispatchEvent(new CustomEvent('show-measure-numbers-changed', {
+                        detail: { show: this._showMeasureNumbers },
+                        bubbles: true
+                    }));
+                }
                 break;
+            }
 
             // Jump to a specific measure (by the key used in measures-data).
             // An optional trailing "|nonce" makes repeated jumps to the same
