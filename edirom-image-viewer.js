@@ -35,8 +35,24 @@ console.log("Image Viewer loaded!");
  * @attribute {object|string} openseadragon-options - Additional OpenSeadragon configuration options as JSON object.
  * 
  * @attribute {string} zones-data - JSON object mapping zone keys to zone objects.
- *   Each zone: { name: string, page: number, ulx: number, uly: number, lrx: number, lry: number }
+ *   Each zone: { type: string, page?: number, ulx?: number, uly?: number,
+ *   lrx?: number, lry?: number, containerClass?: string, innerClass?: string,
+ *   label?: string, group?: string, title?: string, tooltip?: string,
+ *   fn?: string, dataId?: string, filters?: string }. `filters` is a
+ *   space-separated list of opaque filter tokens used by `hidden-filters`.
+ *   The `type` is an opaque string the host assigns (e.g. "measure", "mdiv",
+ *   "annotation"). A single map drives BOTH navigation and overlay rendering,
+ *   so the component is independent of any source format (MEI, TEI, …).
  * @attribute {string} zone - Key of the zone to navigate to (must exist in zones-data).
+ *   An optional trailing "|nonce" is stripped before lookup so that repeating
+ *   the same zone still re-fires attributeChangedCallback.
+ * @attribute {string} visible-types - JSON array of zone `type`s to render as
+ *   visible overlays (e.g. ["annotation"]). [] / absent renders nothing;
+ *   navigation is unaffected by this set.
+ * @attribute {string} hidden-filters - JSON array of opaque filter tokens to
+ *   hide. A rendered overlay is hidden when any of its zone's `filters` tokens
+ *   is in this set. [] / absent hides nothing. The host maps its own
+ *   taxonomies (e.g. annotation categories/priorities) onto these tokens.
  * 
  * @fires communicate-[property]-update - Fired when a property is updated via attribute change.
  * @fires page-changed - Fired when the viewer navigates to a new page. detail: { pageNumber } (1-based).
@@ -75,54 +91,51 @@ class EdiromOpenseadragon extends HTMLElement {
         /** @type {number} Total number of tile sources (images/pages) */
         this.totalTileSources = 0;
         
-        /** @type {Object} Zone lookup map parsed from the zones-data attribute */
+        /**
+         * @type {Object} Zone lookup map parsed from the zones-data attribute.
+         * Keyed by an arbitrary zone key; each entry is a region that carries a
+         * `type` (an opaque string such as 'measure', 'mdiv' or 'annotation')
+         * plus an optional 1-based `page`, optional image-pixel coordinates
+         * {ulx, uly, lrx, lry} and optional render metadata (containerClass,
+         * innerClass, label, group, title, tooltip, fn, dataId, filters). A
+         * single map drives BOTH region navigation (via the `zone`
+         * attribute) and overlay rendering, so the component stays independent
+         * of any particular data format (MEI, TEI, …): the host decides what
+         * each zone means through its `type` and the CSS classes it supplies.
+         */
         this._zonesData = {};
 
         /**
-         * @type {Object} Measure lookup map parsed from the measures-data attribute.
-         * Keyed by measure number/id; each entry is a region
-         * {page, ulx, uly, lrx, lry} just like a zone.
+         * @type {?Array<string>} Zone types that should be rendered as visible
+         * overlays, pushed via the `visible-types` attribute. null / [] means
+         * render nothing; e.g. ['annotation'] renders annotation zones only.
+         * Navigation is independent of this set (any zone can be navigated to
+         * regardless of whether its type is rendered).
          */
-        this._measuresData = {};
+        this._visibleTypes = [];
 
         /**
-         * @type {Object} Movement (mdiv) lookup map parsed from the mdivs-data
-         * attribute. Keyed by mdiv id; each entry is at least {page} (the
-         * movement's first page) and may also carry a region.
+         * @type {Object<string,HTMLElement>} group-keyed shared overlay
+         * containers for the currently rendered zones. Zones sharing a `group`
+         * (e.g. several annotations on the same measure) share one container so
+         * their inner elements stack instead of overlapping.
          */
-        this._mdivsData = {};
+        this._overlayContainers = {};
 
         /**
-         * @type {Array<Object>} Annotation overlay data pushed via the
-         * annotations-data attribute. Each entry carries the annotation's id,
-         * title, uri, categories, priority, fn (host click action) and a
-         * plist of image-pixel regions. The component renders the overlay
-         * badges in its shadow DOM and fires CustomEvents the host listens to
-         * for tooltip / click / highlight, mirroring measures-data / mdivs-data.
+         * @type {Array<Object>} Flat list of every rendered overlay inner
+         * element, each entry { element, containerId, filters }. `filters` is
+         * the zone's array of opaque filter tokens. Used by the generic
+         * hidden-filters mechanism so overlays can be shown/hidden individually
+         * without re-pushing or re-rendering zones-data.
          */
-        this._annotationsData = [];
+        this._overlayBadges = [];
 
         /**
-         * @type {Object<string,HTMLElement>} measure-keyed shared badge
-         * containers for the currently rendered annotations. All annotations
-         * pointing at the same measure share one container so their badges
-         * stack instead of overlapping.
-         */
-        this._annotationContainers = {};
-
-        /**
-         * @type {Array<Object>} Flat list of every rendered annotation badge,
-         * each entry { element, containerId, categories, priority }. Used by
-         * the category/priority filter so badges can be shown/hidden
-         * individually without re-pushing or re-rendering annotations-data.
-         */
-        this._annotationBadges = [];
-
-        /**
-         * @type {?HTMLElement} The single reusable annotation tooltip element
-         * rendered in the shadow DOM. The host preloads each annotation's
-         * server-rendered tooltip HTML into the `tooltip` field of
-         * annotations-data, and the component renders/positions it on hover.
+         * @type {?HTMLElement} The single reusable overlay tooltip element
+         * rendered in the shadow DOM. The host preloads each zone's
+         * server-rendered tooltip HTML into the `tooltip` field of its
+         * zones-data entry, and the component renders/positions it on hover.
          */
         this._annotTipEl = null;
 
@@ -133,49 +146,14 @@ class EdiromOpenseadragon extends HTMLElement {
         this._annotTipHideTimer = null;
 
         /**
-         * @type {boolean} Whether annotation overlays are currently visible.
-         * Toggled via the `show-annotations` attribute without discarding the
-         * pushed annotations-data, so show/hide is a pure visibility switch.
+         * @type {?Array<string>} Opaque filter tokens that should be HIDDEN,
+         * pushed via the `hidden-filters` attribute. null / [] means "nothing
+         * hidden" (show all). A rendered overlay is hidden when ANY of its
+         * zone's `filters` tokens is in this set. The component does not know
+         * what the tokens mean (categories, priorities, tags, …); the host maps
+         * its own taxonomies onto them, keeping the component format-agnostic.
          */
-        this._showAnnotations = false;
-
-        /**
-         * @type {?Array<string>} Currently visible annotation category ids,
-         * pushed via the `visible-categories` attribute. null means "no filter
-         * pushed yet" (show all); ['undefined'] means the edition has no
-         * category taxonomy (show all); an empty array hides everything.
-         */
-        this._visibleCategories = null;
-
-        /**
-         * @type {?Array<string>} Currently visible annotation priority ids,
-         * pushed via the `visible-priorities` attribute. Same null / ['undefined']
-         * / empty semantics as `_visibleCategories`.
-         */
-        this._visiblePriorities = null;
-
-        /**
-         * @type {Array<Object>} Measure-number overlay data pushed via the
-         * measure-numbers-data attribute. Each entry carries the measure's id,
-         * name (the printed number) and an image-pixel rectangle. The component
-         * renders the `.measure` number boxes in its shadow DOM, mirroring the
-         * annotations-data push model.
-         */
-        this._measureNumbersData = [];
-
-        /**
-         * @type {Object<string,HTMLElement>} id-keyed measure-number overlay
-         * containers currently rendered, so visibility can be toggled and the
-         * overlays cleared without re-pushing the data.
-         */
-        this._measureNumberContainers = {};
-
-        /**
-         * @type {boolean} Whether measure-number overlays are currently visible.
-         * Toggled via the `show-measure-numbers` attribute without discarding
-         * the pushed measure-numbers-data.
-         */
-        this._showMeasureNumbers = false;
+        this._hiddenFilters = null;
 
         /** @type {string|null} Key of the currently active zone, or null */
         this._currentZoneKey = null;
@@ -194,7 +172,7 @@ class EdiromOpenseadragon extends HTMLElement {
      * @returns {Array<string>} The list of observed attributes.
      */
     static get observedAttributes() {
-        return ['preserveviewport', 'clicktozoom', 'minzoomlevel', 'maxzoomlevel', 'shownavigationcontrol', 'sequencemode', 'shownavigator', 'showzoomcontrol', 'showhomecontrol', 'showfullpagecontrol', 'showsequencecontrol', 'tilesources', 'pagenumber', 'zoom', 'rotation', 'triggerhome', 'triggerfullscreen', 'openseadragon-options', 'zones-data', 'zone', 'measures-data', 'measure', 'mdivs-data', 'mdiv', 'annotations-data', 'show-annotations', 'visible-categories', 'visible-priorities', 'measure-numbers-data', 'show-measure-numbers', 'fitrect', 'view-mode'];
+        return ['preserveviewport', 'clicktozoom', 'minzoomlevel', 'maxzoomlevel', 'shownavigationcontrol', 'sequencemode', 'shownavigator', 'showzoomcontrol', 'showhomecontrol', 'showfullpagecontrol', 'showsequencecontrol', 'tilesources', 'pagenumber', 'zoom', 'rotation', 'triggerhome', 'triggerfullscreen', 'openseadragon-options', 'zones-data', 'zone', 'visible-types', 'hidden-filters', 'fitrect', 'view-mode'];
     }
 
     /**
@@ -415,162 +393,61 @@ class EdiromOpenseadragon extends HTMLElement {
                 if (this._currentZoneKey) {
                     this._applyZoneByKey(this._currentZoneKey);
                 }
+                // Re-render the visible overlays for the current page from the
+                // new data (annotations, measure labels, …).
+                this._renderOverlays();
                 break;
 
-            case 'zone':
-                this._applyZoneByKey(newPropertyValue);
-                break;
-
-            // Push-model navigation data: the host resolves all measures /
-            // movements of the source once and pushes them as JSON maps. The
-            // semantic 'measure' / 'mdiv' attributes below are then pure
-            // client-side lookups, mirroring the Verovio renderer's
-            // measurenumber / mdivname attributes.
-            case 'measures-data':
-                try {
-                    this._measuresData = JSON.parse(newPropertyValue) || {};
-                } catch (e) {
-                    console.error('Invalid measures-data JSON:', e);
-                    this._measuresData = {};
-                }
-                break;
-
-            case 'mdivs-data':
-                try {
-                    this._mdivsData = JSON.parse(newPropertyValue) || {};
-                } catch (e) {
-                    console.error('Invalid mdivs-data JSON:', e);
-                    this._mdivsData = {};
-                }
-                break;
-
-            // Annotation overlays (push model, like measures-data). The host
-            // pushes the page's annotations as JSON when the "show
-            // annotations" button is clicked, and pushes an empty array to
-            // hide them. The component renders the overlay badges and fires
-            // CustomEvents the host uses for tooltip / click / highlight.
-            case 'annotations-data':
-                try {
-                    this._annotationsData = JSON.parse(newPropertyValue) || [];
-                } catch (e) {
-                    console.error('Invalid annotations-data JSON:', e);
-                    this._annotationsData = [];
-                }
-                console.log('edirom-image-viewer: annotations-data', this._annotationsData);
-                this._renderAnnotations();
-                break;
-
-            // Toggle the visibility of the already-rendered annotation overlays
-            // without discarding their data. "true" (or absent value) shows
-            // them, "false" hides them. Separate from annotations-data so the
-            // host can show/hide repeatedly without re-pushing the data.
-            case 'show-annotations': {
-                const nextShowAnnotations = String(newPropertyValue) !== 'false';
-                const annotationsChanged = this._showAnnotations !== nextShowAnnotations;
-                this._showAnnotations = nextShowAnnotations;
-                this._applyAnnotationVisibility();
-                // Announce the new visibility ONLY when it actually changed, so
-                // the host can keep its toolbar toggle button in sync, regardless
-                // of how the attribute was changed (button, API or direct edit).
-                // Skipping no-op sets is important: setAttribute fires this
-                // callback even when the value is unchanged, and a spurious
-                // event would clobber an in-progress host toggle.
-                if (annotationsChanged) {
-                    this.dispatchEvent(new CustomEvent('show-annotations-changed', {
-                        detail: { show: this._showAnnotations },
-                        bubbles: true
-                    }));
-                }
-                break;
-            }
-
-            // Category/priority filter (push model). The host pushes the set of
-            // currently visible category ids / priority ids as JSON arrays when
-            // the user toggles the annotation filter menus. The component hides
-            // badges that match neither, without re-pushing annotations-data,
-            // and re-applies the filter to every freshly rendered page.
-            case 'visible-categories':
-                try {
-                    this._visibleCategories = JSON.parse(newPropertyValue);
-                } catch (e) {
-                    console.error('Invalid visible-categories JSON:', e);
-                    this._visibleCategories = null;
-                }
-                this._applyAnnotationVisibility();
-                this._emitAnnotationFilterChanged();
-                break;
-
-            case 'visible-priorities':
-                try {
-                    this._visiblePriorities = JSON.parse(newPropertyValue);
-                } catch (e) {
-                    console.error('Invalid visible-priorities JSON:', e);
-                    this._visiblePriorities = null;
-                }
-                this._applyAnnotationVisibility();
-                this._emitAnnotationFilterChanged();
-                break;
-
-            // Measure-number overlays (push model, like annotations-data). The
-            // host pushes the page's measures as JSON once per page; the
-            // component renders the `.measure` number boxes in its shadow DOM.
-            case 'measure-numbers-data':
-                try {
-                    this._measureNumbersData = JSON.parse(newPropertyValue) || [];
-                } catch (e) {
-                    console.error('Invalid measure-numbers-data JSON:', e);
-                    this._measureNumbersData = [];
-                }
-                this._renderMeasureNumbers();
-                break;
-
-            // Toggle the visibility of the already-rendered measure-number
-            // overlays without discarding their data. "true" shows them,
-            // "false" hides them.
-            case 'show-measure-numbers': {
-                const nextShowMeasures = String(newPropertyValue) !== 'false';
-                const measuresChanged = this._showMeasureNumbers !== nextShowMeasures;
-                this._showMeasureNumbers = nextShowMeasures;
-                this._applyMeasureNumberVisibility();
-                // Announce the new visibility ONLY when it actually changed (see
-                // the show-annotations case): setAttribute fires this callback
-                // even for no-op sets, and a spurious event would clobber an
-                // in-progress host toggle.
-                if (measuresChanged) {
-                    this.dispatchEvent(new CustomEvent('show-measure-numbers-changed', {
-                        detail: { show: this._showMeasureNumbers },
-                        bubbles: true
-                    }));
-                }
-                break;
-            }
-
-            // Jump to a specific measure (by the key used in measures-data).
-            // An optional trailing "|nonce" makes repeated jumps to the same
-            // measure re-fire this handler; the nonce is stripped before lookup.
-            case 'measure': {
-                const measureKey = String(newPropertyValue).split('|')[0];
-                // Ignore the empty default value (measure="") set in markup so
-                // it does not log a "not found" warning on viewer creation.
-                if (measureKey) this._applyMeasure(measureKey);
-                break;
-            }
-
-            // Load / jump to a movement's first page (by the key used in
-            // mdivs-data). Same optional "|nonce" handling as 'measure'.
-            case 'mdiv': {
-                const mdivKey = String(newPropertyValue).split('|')[0];
-                // Ignore the empty default value (mdiv="") set in markup so it
+            // Jump to a specific zone (by the key used in zones-data). An
+            // optional trailing "|nonce" makes repeated jumps to the same zone
+            // re-fire this handler; the nonce is stripped before lookup. Host
+            // pushes measures / movements / annotations as ordinary zone
+            // entries, so this is the single navigation entry point for all
+            // region jumps.
+            case 'zone': {
+                const zoneKey = String(newPropertyValue).split('|')[0];
+                // Ignore the empty default value (zone="") set in markup so it
                 // does not log a "not found" warning on viewer creation.
-                if (mdivKey) this._applyMdiv(mdivKey);
+                if (zoneKey) this._applyZoneByKey(zoneKey);
                 break;
             }
+
+            // Which zone `type`s are rendered as visible overlays (push model,
+            // format-independent). The host pushes a JSON array of type strings
+            // when the "show annotations" / "show measures" buttons are toggled;
+            // [] hides everything. Navigation is unaffected.
+            case 'visible-types':
+                try {
+                    this._visibleTypes = JSON.parse(newPropertyValue) || [];
+                } catch (e) {
+                    console.error('Invalid visible-types JSON:', e);
+                    this._visibleTypes = [];
+                }
+                this._renderOverlays();
+                break;
+
+            // Generic overlay filter (push model). The host pushes the set of
+            // filter tokens to HIDE as a JSON array whenever the user toggles a
+            // filter menu. A rendered overlay is hidden when any of its zone's
+            // `filters` tokens is in the set. The component neither re-pushes
+            // zones-data nor re-renders, and re-applies the filter to every
+            // freshly rendered page.
+            case 'hidden-filters':
+                try {
+                    this._hiddenFilters = JSON.parse(newPropertyValue);
+                } catch (e) {
+                    console.error('Invalid hidden-filters JSON:', e);
+                    this._hiddenFilters = null;
+                }
+                this._applyOverlayVisibility();
+                this._emitFilterChanged();
+                break;
 
             // Fit the viewport to an image-pixel rectangle. Value format:
             // "x,y,width,height" with an optional trailing nonce token that is
             // ignored — the nonce only exists so that repeating the SAME jump
             // produces a different attribute value and thus re-fires
-            // attributeChangedCallback (used by jump-to-measure / jump-to-mdiv).
+            // attributeChangedCallback (used for direct rectangle navigation).
             case 'fitrect':
                 if (newPropertyValue) {
                     const parts = String(newPropertyValue).split(',');
@@ -734,6 +611,9 @@ class EdiromOpenseadragon extends HTMLElement {
             // current tile source has been drawn.
             this.openSeaDragon.addOnceHandler('tile-drawn', () => {
                 this.dispatchEvent(new CustomEvent('image-ready', { bubbles: true }));
+                // Render any overlays that were pushed before the viewer/tiles
+                // were ready (overlay placement needs a loaded TiledImage).
+                this._renderOverlays();
             });
 
             // --- Page change and zone handlers ---
@@ -742,6 +622,20 @@ class EdiromOpenseadragon extends HTMLElement {
             // is shown.
             this.openSeaDragon.addHandler('page', (event) => {
                 this._firePageChanged(event.page + 1);
+
+                // Re-render the visible overlays for the new page once its tiles
+                // settle. Overlay positions depend on the current TiledImage, so
+                // defer until it is available; 'tile-drawn' also fires for cached
+                // pages, and the timeout is a fallback after OSD's home reset.
+                let rendered = false;
+                const renderOverlays = () => {
+                    if (rendered) return;
+                    rendered = true;
+                    this._renderOverlays();
+                };
+                this.openSeaDragon.addOnceHandler('tile-drawn', renderOverlays);
+                setTimeout(renderOverlays, 250);
+
                 if (!this._pendingZoneAfterPageChange) return;
                 const pending = this._pendingZoneAfterPageChange;
                 this._pendingZoneAfterPageChange = null;
@@ -1018,22 +912,22 @@ class EdiromOpenseadragon extends HTMLElement {
     }
 
     // ---------------------------------------------------------------
-    //  Annotation overlays (push model, like measures-data)
+    //  Zone overlays (push model, rendered from zones-data by type)
     // ---------------------------------------------------------------
 
     /**
-     * Removes all annotation overlays currently rendered in the shadow DOM and
-     * resets the per-measure container map.
+     * Removes all zone overlays currently rendered in the shadow DOM and
+     * resets the per-group container map.
      * @private
      */
-    _clearAnnotations() {
+    _clearOverlays() {
         const me = this;
-        Object.keys(this._annotationContainers).forEach(function (containerId) {
+        Object.keys(this._overlayContainers).forEach(function (containerId) {
             me.removeOverlay(containerId);
         });
-        this._annotationContainers = {};
-        this._annotationBadges = [];
-        // hide any tooltip left over from the previous page's annotations
+        this._overlayContainers = {};
+        this._overlayBadges = [];
+        // hide any tooltip left over from the previous page's overlays
         if (this._annotTipHideTimer) { clearTimeout(this._annotTipHideTimer); this._annotTipHideTimer = null; }
         if (this._annotTipEl) this._annotTipEl.style.display = 'none';
     }
@@ -1112,57 +1006,29 @@ class EdiromOpenseadragon extends HTMLElement {
     }
 
     /**
-     * Returns whether a token list (an annotation's category or priority ids)
-     * passes a pushed filter list.
-     *  - filter null  -> no filter pushed yet -> show all
-     *  - filter ['undefined'] -> edition has no such taxonomy -> show all
-     *  - filter []    -> everything unchecked -> hide all
-     *  - otherwise    -> visible if any token is in the filter list
-     * Mirrors the host's legacy annotationFilterChanged semantics.
+     * Whether a zone should be HIDDEN by the current `hidden-filters` set: true
+     * when any of the zone's opaque filter tokens is in the hidden set. With no
+     * hidden set (null / empty) nothing is hidden. This single exclusion rule
+     * replaces the old per-axis category/priority matching and stays agnostic
+     * of what the tokens mean.
      * @private
      */
-    _matchesFilterList(filter, tokens) {
-        if (!Array.isArray(filter)) return true;
-        if (filter.length === 1 && filter[0] === 'undefined') return true;
+    _zoneHiddenByFilter(tokens) {
+        const hidden = this._hiddenFilters;
+        if (!Array.isArray(hidden) || hidden.length === 0) return false;
         for (let i = 0; i < tokens.length; i++) {
-            if (filter.indexOf(tokens[i]) !== -1) return true;
+            if (hidden.indexOf(tokens[i]) !== -1) return true;
         }
         return false;
     }
 
     /**
-     * Whether a single annotation badge passes the current category AND
-     * priority filters.
-     * @private
-     */
-    _annotationMatchesFilter(categories, priority) {
-        const catTokens = String(categories || '').split(/\s+/).filter(Boolean);
-        const prioTokens = String(priority || '').split(/\s+/).filter(Boolean);
-        return this._matchesFilterList(this._visibleCategories, catTokens)
-            && this._matchesFilterList(this._visiblePriorities, prioTokens);
-    }
-
-    /**
-     * Shows or hides every rendered annotation overlay container according to
-     * `this._showAnnotations`. Used by the `show-annotations` attribute so the
-     * host can toggle visibility without re-pushing annotations-data.
-     *
-     * NOTE: this toggles `visibility`, not `display`. OpenSeadragon re-applies
-     * `display:block` to every overlay element on each viewport redraw, which
-     * would override a `display:none` hide on the next pan/zoom; it does not
-     * touch `visibility`, so the hide sticks.
-     * @private
-     */
-    /**
-     * Shows or hides annotation overlays according to both the global
-     * `show-annotations` state and the per-badge category/priority filter.
-     *
-     * Each badge is shown/hidden individually via `display` (a container can
-     * stack badges from different annotations), and a container is made visible
-     * only when annotations are on AND it still has at least one badge that
-     * passes the filter. Used by `show-annotations`, `visible-categories` and
-     * `visible-priorities`, and re-applied after every page render so the
-     * chosen state persists across pages.
+     * Shows or hides rendered zone overlays according to the generic
+     * `hidden-filters` set. Only overlays flagged `filterable` (i.e. those that
+     * carry filter tokens, such as annotations) are affected; non-filterable
+     * overlays (e.g. measure labels) are always shown. A container is made
+     * visible only when it still has at least one visible child. Re-applied
+     * after every render so the filter persists across pages.
      *
      * NOTE: container visibility toggles `visibility`, not `display`, because
      * OpenSeadragon re-applies `display:block` to every overlay on each redraw
@@ -1170,205 +1036,149 @@ class EdiromOpenseadragon extends HTMLElement {
      * `visibility`.
      * @private
      */
-    _applyAnnotationVisibility() {
+    _applyOverlayVisibility() {
         const me = this;
-        const show = this._showAnnotations;
-        const containers = this._annotationContainers;
+        const containers = this._overlayContainers;
         const containerHasVisible = {};
 
-        (this._annotationBadges || []).forEach(function (rec) {
-            const match = me._annotationMatchesFilter(rec.categories, rec.priority);
-            rec.element.style.display = match ? '' : 'none';
-            if (match) containerHasVisible[rec.containerId] = true;
+        (this._overlayBadges || []).forEach(function (rec) {
+            const visible = !rec.filterable || !me._zoneHiddenByFilter(rec.filters);
+            rec.element.style.display = visible ? '' : 'none';
+            if (visible) containerHasVisible[rec.containerId] = true;
         });
 
         Object.keys(containers).forEach(function (containerId) {
-            const visible = show && containerHasVisible[containerId];
-            containers[containerId].style.visibility = visible ? '' : 'hidden';
+            containers[containerId].style.visibility =
+                containerHasVisible[containerId] ? '' : 'hidden';
         });
     }
 
     /**
-     * Notifies the host that the active category/priority filter changed, so it
-     * can keep its filter menu checkboxes in sync. Fired whenever the
-     * `visible-categories` or `visible-priorities` attribute changes (including
-     * when set externally, e.g. via DevTools). The detail carries the current
-     * filter arrays (null = no filter / show all).
+     * Notifies the host that the active filter changed, so it can keep its
+     * filter menu checkboxes in sync. Fired whenever the `hidden-filters`
+     * attribute changes (including when set externally, e.g. via DevTools).
+     * The detail carries the current hidden-token array (null / [] = nothing
+     * hidden / show all).
      * @private
      */
-    _emitAnnotationFilterChanged() {
-        this.dispatchEvent(new CustomEvent('annotation-filter-changed', {
+    _emitFilterChanged() {
+        this.dispatchEvent(new CustomEvent('filter-changed', {
             detail: {
-                visibleCategories: this._visibleCategories,
-                visiblePriorities: this._visiblePriorities
+                hiddenFilters: this._hiddenFilters
             }
         }));
     }
 
     /**
-     * Renders annotation overlays from `this._annotationsData`. All annotations
-     * pointing at the same measure share one container (keyed by
-     * `idPrefix_measureId`) so their badges stack; each badge gets the id
-     * `idPrefix_measureId + annoId` and the class `annotIcon {categories}
-     * {priority} {partType}` so the host's filter / lookup helpers keep working.
-     * Each badge fires `annotation-click` / `annotation-mouseenter` /
-     * `annotation-mouseleave` CustomEvents. The component renders the hover
-     * tooltip itself from each annotation's host-supplied `tooltip` HTML; the
-     * host only listens to `annotation-click` for its ExtJS-specific click
-     * action.
+     * Renders zone overlays from `this._zonesData` for the current page. Only
+     * zones whose `type` is in `this._visibleTypes`, that carry image-pixel
+     * coordinates and that belong to the current page are drawn. Zones sharing
+     * a `group` (e.g. several annotations on the same measure) share one
+     * container so their inner elements stack.
+     *
+     * The component is format-agnostic: the host supplies the CSS classes
+     * (`containerClass` / `innerClass`), optional `label` text, `tooltip` HTML
+     * and `fn` (host click action) per zone. Each inner element fires generic
+     * `zone-click` / `zone-mouseenter` / `zone-mouseleave` CustomEvents the
+     * host listens to; the component renders the hover tooltip itself.
      * @private
      */
-    _renderAnnotations() {
+    _renderOverlays() {
         const me = this;
-        this._clearAnnotations();
-        if (!this.openSeaDragon || !Array.isArray(this._annotationsData)) return;
+        this._clearOverlays();
+        if (!this.openSeaDragon) return;
 
-        this._annotationsData.forEach(function (annotation) {
-            const idPrefix = annotation.idPrefix || '';
-            const annoId = annotation.id;
-            const name = annotation.title || '';
-            const uri = annotation.uri || '';
-            const categories = annotation.categories || '';
-            const priority = annotation.priority || '';
-            const fn = annotation.fn || '';
-            const tooltip = annotation.tooltip || '';
-            const plist = Array.isArray(annotation.plist) ? annotation.plist : [];
+        const visibleTypes = Array.isArray(this._visibleTypes) ? this._visibleTypes : [];
+        if (visibleTypes.length === 0) return;
 
-            plist.forEach(function (shape) {
-                const measureId = shape.id;
-                const x = Number(shape.ulx);
-                const y = Number(shape.uly);
-                const width = Number(shape.lrx) - Number(shape.ulx);
-                const height = Number(shape.lry) - Number(shape.uly);
-                const partType = shape.type || '';
+        const currentPage = this.openSeaDragon.currentPage() + 1; // 1-based
 
-                const containerId = idPrefix + '_' + measureId;
-                let container = me._annotationContainers[containerId];
-                if (!container) {
-                    container = document.createElement('div');
-                    container.id = containerId;
-                    container.className = 'annotation';
-                    me._annotationContainers[containerId] = container;
-                    me.addImageOverlay(container, x, y, width, height);
-                }
+        Object.keys(this._zonesData).forEach(function (zoneKey) {
+            const zone = me._zonesData[zoneKey];
+            if (!zone || typeof zone !== 'object') return;
 
-                const badge = document.createElement('div');
-                badge.id = containerId + annoId;
-                badge.className = ('annotIcon ' + categories + ' ' + priority + ' ' + partType).replace(/\s+/g, ' ').trim();
-                badge.title = name;
-                badge.setAttribute('data-edirom-annot-id', annoId);
-                container.appendChild(badge);
+            // Only render zones of a currently visible type.
+            if (visibleTypes.indexOf(zone.type) === -1) return;
 
-                // track the badge so the category/priority filter can toggle it
-                me._annotationBadges.push({
-                    element: badge,
-                    containerId: containerId,
-                    categories: categories,
-                    priority: priority
-                });
+            // Skip zones without image-pixel coordinates (e.g. movement targets
+            // that only carry a page for navigation).
+            if (zone.ulx == null || zone.uly == null ||
+                zone.lrx == null || zone.lry == null) return;
 
-                const detail = { id: annoId, uri: uri, fn: fn, title: name, element: badge };
+            // Only render zones that belong to the current page (when a page is
+            // given). Zones without a page are treated as page-agnostic.
+            if (zone.page != null && parseInt(zone.page) !== currentPage) return;
 
-                // OpenSeadragon's MouseTracker captures pointer events on its
-                // container; stop them on the badge so the native click fires
-                // and the host receives the event instead of OSD panning.
-                badge.addEventListener('pointerdown', function (ev) { ev.stopPropagation(); });
-                badge.addEventListener('mousedown', function (ev) { ev.stopPropagation(); });
-                badge.addEventListener('click', function (ev) {
-                    ev.stopPropagation();
-                    ev.preventDefault();
-                    me.dispatchEvent(new CustomEvent('annotation-click', { detail: detail }));
-                });
-                badge.addEventListener('mouseenter', function () {
-                    me._showAnnotationTooltip(badge, tooltip);
-                    me.dispatchEvent(new CustomEvent('annotation-mouseenter', { detail: detail }));
-                });
-                badge.addEventListener('mouseleave', function () {
-                    me._hideAnnotationTooltip();
-                    me.dispatchEvent(new CustomEvent('annotation-mouseleave', { detail: detail }));
-                });
+            const x = Number(zone.ulx);
+            const y = Number(zone.uly);
+            const width = Number(zone.lrx) - Number(zone.ulx);
+            const height = Number(zone.lry) - Number(zone.uly);
+
+            // Zones sharing a group stack inside one container; ungrouped zones
+            // get their own container keyed by the zone key.
+            const containerId = zone.group || zoneKey;
+            let container = me._overlayContainers[containerId];
+            if (!container) {
+                container = document.createElement('div');
+                container.id = containerId;
+                container.className = zone.containerClass || ('edirom-zone edirom-zone-' + zone.type);
+                if (zone.dataId != null) container.dataset.ediromAnnotId = zone.dataId;
+                me._overlayContainers[containerId] = container;
+                me.addImageOverlay(container, x, y, width, height);
+            }
+
+            const inner = document.createElement('div');
+            inner.id = containerId + '_' + zoneKey;
+            inner.className = (zone.innerClass || 'edirom-zone-inner').replace(/\s+/g, ' ').trim();
+            if (zone.label != null && zone.label !== '') inner.textContent = zone.label;
+            if (zone.title) inner.title = zone.title;
+            if (zone.dataId != null) inner.setAttribute('data-edirom-annot-id', zone.dataId);
+            container.appendChild(inner);
+
+            // Track the inner element so the generic filter can toggle it.
+            // `filters` are the zone's opaque filter tokens; `filterable` is
+            // true only for zones carrying at least one token (e.g. annotations),
+            // so non-filterable zones (measure labels) always stay visible.
+            const filterTokens = String(zone.filters || '').split(/\s+/).filter(Boolean);
+            me._overlayBadges.push({
+                element: inner,
+                containerId: containerId,
+                filters: filterTokens,
+                filterable: filterTokens.length > 0
+            });
+
+            const detail = {
+                type: zone.type,
+                key: zoneKey,
+                id: zone.dataId,
+                fn: zone.fn || '',
+                title: zone.title || '',
+                element: inner
+            };
+            const tooltip = zone.tooltip || '';
+
+            // OpenSeadragon's MouseTracker captures pointer events on its
+            // container; stop them on the inner element so the native click
+            // fires and the host receives the event instead of OSD panning.
+            inner.addEventListener('pointerdown', function (ev) { ev.stopPropagation(); });
+            inner.addEventListener('mousedown', function (ev) { ev.stopPropagation(); });
+            inner.addEventListener('click', function (ev) {
+                ev.stopPropagation();
+                ev.preventDefault();
+                me.dispatchEvent(new CustomEvent('zone-click', { detail: detail }));
+            });
+            inner.addEventListener('mouseenter', function () {
+                if (tooltip) me._showAnnotationTooltip(inner, tooltip);
+                me.dispatchEvent(new CustomEvent('zone-mouseenter', { detail: detail }));
+            });
+            inner.addEventListener('mouseleave', function () {
+                if (tooltip) me._hideAnnotationTooltip();
+                me.dispatchEvent(new CustomEvent('zone-mouseleave', { detail: detail }));
             });
         });
 
-        // honour the current show/hide state for the freshly built overlays
-        this._applyAnnotationVisibility();
-    }
-
-    // ---------------------------------------------------------------
-    //  Measure-number overlays (push model, like annotations-data)
-    // ---------------------------------------------------------------
-
-    /**
-     * Removes all measure-number overlays currently rendered in the shadow DOM
-     * and resets the container map.
-     * @private
-     */
-    _clearMeasureNumbers() {
-        const me = this;
-        Object.keys(this._measureNumberContainers).forEach(function (containerId) {
-            me.removeOverlay(containerId);
-        });
-        this._measureNumberContainers = {};
-    }
-
-    /**
-     * Shows or hides every rendered measure-number overlay according to
-     * `this._showMeasureNumbers`. Toggles `visibility` (not `display`) for the
-     * same reason as annotations: OpenSeadragon re-applies `display:block` on
-     * each redraw but never touches `visibility`.
-     * @private
-     */
-    _applyMeasureNumberVisibility() {
-        const value = this._showMeasureNumbers ? '' : 'hidden';
-        const containers = this._measureNumberContainers;
-        Object.keys(containers).forEach(function (containerId) {
-            containers[containerId].style.visibility = value;
-        });
-    }
-
-    /**
-     * Renders the measure-number boxes from `this._measureNumbersData`. Each
-     * entry gets a `.measure` container (id `idPrefix_id`) holding a
-     * `.measureInner` / `.measureInnerEmpty` span with the printed number, added
-     * as an OSD image overlay at its pixel rect. A local hover highlight class
-     * is toggled on the box (no ExtJS needed for measure numbers).
-     * @private
-     */
-    _renderMeasureNumbers() {
-        const me = this;
-        this._clearMeasureNumbers();
-        if (!this.openSeaDragon || !Array.isArray(this._measureNumbersData)) return;
-
-        this._measureNumbersData.forEach(function (m) {
-            const idPrefix = m.idPrefix || '';
-            const id = m.id;
-            const name = m.name || '';
-            const x = Number(m.ulx);
-            const y = Number(m.uly);
-            const width = Number(m.lrx) - Number(m.ulx);
-            const height = Number(m.lry) - Number(m.uly);
-
-            const containerId = idPrefix + '_' + id;
-            const measure = document.createElement('div');
-            measure.id = containerId;
-            measure.className = 'measure';
-
-            const span = document.createElement('span');
-            span.className = (name === '' ? 'measureInnerEmpty' : 'measureInner');
-            span.id = containerId + '_inner';
-            span.style.position = 'relative';
-            span.textContent = name;
-            measure.appendChild(span);
-
-            me._measureNumberContainers[containerId] = measure;
-            me.addImageOverlay(measure, x, y, width, height);
-
-            measure.addEventListener('mouseenter', function () { measure.classList.add('highlighted'); });
-            measure.addEventListener('mouseleave', function () { measure.classList.remove('highlighted'); });
-        });
-
-        // honour the current show/hide state for the freshly built overlays
-        this._applyMeasureNumberVisibility();
+        // honour the current category/priority filter for the freshly built overlays
+        this._applyOverlayVisibility();
     }
 
     // ---------------------------------------------------------------
@@ -1392,35 +1202,9 @@ class EdiromOpenseadragon extends HTMLElement {
     }
 
     /**
-     * Jumps to the measure identified by `measureKey` in `_measuresData`.
-     * @param {string} measureKey - Key of the measure in the measures-data map.
-     */
-    _applyMeasure(measureKey) {
-        const region = this._measuresData[measureKey];
-        if (!region) {
-            console.warn(`edirom-image-viewer: measure "${measureKey}" not found in measures-data.`);
-            return;
-        }
-        this._navigateToRegion(region, measureKey, 'measure-changed');
-    }
-
-    /**
-     * Loads / jumps to the movement (mdiv) identified by `mdivKey` in
-     * `_mdivsData`. A movement entry typically only carries a `page` (its first
-     * page), in which case the viewer navigates to that page and shows it whole.
-     * @param {string} mdivKey - Key of the movement in the mdivs-data map.
-     */
-    _applyMdiv(mdivKey) {
-        const region = this._mdivsData[mdivKey];
-        if (!region) {
-            console.warn(`edirom-image-viewer: mdiv "${mdivKey}" not found in mdivs-data.`);
-            return;
-        }
-        this._navigateToRegion(region, mdivKey, 'mdiv-changed');
-    }
-
-    /**
-     * Shared page-aware navigation used by zone / measure / mdiv jumps.
+     * Shared page-aware navigation used by zone jumps. Measures and movements
+     * are pushed as ordinary zone entries by the host, so this is the single
+     * page-aware region navigator.
      * Handles same-page transitions (apply region directly) and cross-page
      * transitions (change page, then apply the region once tiles are loaded).
      * @param {Object} region - Region with a 1-based `page` and optional
@@ -1496,8 +1280,7 @@ class EdiromOpenseadragon extends HTMLElement {
     }
 
     /**
-     * Dispatches a region-navigation custom event (`zone-changed`,
-     * `measure-changed` or `mdiv-changed`).
+     * Dispatches a region-navigation custom event (currently `zone-changed`).
      * @param {string} eventName - The event name to dispatch.
      * @param {string} key - The lookup key that was navigated to.
      * @param {Object} region - The region object that was navigated to.

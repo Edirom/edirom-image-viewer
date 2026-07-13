@@ -17,11 +17,7 @@ This web component displays IIIF images using the [OpenSeadragon](https://opense
 - **Attribute-Driven**: All interactions through standard HTML attributes
 - **Custom Configuration**: Pass advanced OpenSeadragon options via JSON
 - **Event Communication**: Custom events for state changes
-- **Region Navigation**: Define lookup maps of named regions and jump to them with pixel-precise, aspect-preserving viewport fits, including automatic cross-page navigation. Three complementary lookup maps are supported:
-    - **Zones** (`zones-data` / `zone`) — generic named regions.
-    - **Measures** (`measures-data` / `measure`) — music measures/bars.
-    - **Movements** (`mdivs-data` / `mdiv`) — MEI `<mdiv>` movements (page-level, optional region).
-- **Measure-Number Overlays** (`measure-numbers-data` / `show-measure-numbers`): Render labelled measure-number boxes on top of the current image, with a persistent show/hide toggle and hover highlighting.
+- **Region Navigation** (`zones-data` / `zone`): Define a lookup map of named regions (zones) and jump to any of them with pixel-precise, aspect-preserving viewport fits, including automatic cross-page navigation. All navigable regions — including music measures/bars and MEI `<mdiv>` movements — are expressed as ordinary zone entries; the host chooses the key convention (e.g. namespaced `measure:...` / `mdiv:...` keys).
 - **Annotation Overlays** (`annotations-data` / `show-annotations`): Render clickable annotation badges on top of the current image, with a persistent show/hide toggle, category/priority filtering (`visible-categories` / `visible-priorities`), and component-rendered hover tooltips (host-supplied HTML via the `tooltip` field).
 - **Rectangle Fit** (`fitrect`): Fit the viewport to an arbitrary image-pixel rectangle.
 - **View Mode** (`view-mode`): Declarative view-mode attribute that is recorded and re-broadcast for host code to react to.
@@ -108,18 +104,12 @@ This applies to `pagenumber` attribute and all page-related methods. The compone
 | `triggerhome`            | boolean | Trigger home position reset (set to `"true"` to reset view to initial state).                                                                            | `"false"` |
 | `triggerfullscreen`      | boolean | Trigger fullscreen mode toggle (set to `"true"` to toggle fullscreen).                                                                                   | `"false"` |
 | `openseadragon-options`  | string  | JSON object with additional OpenSeadragon configuration options. Example: `'{"showNavigator": true}'`                             | `""`     |
-| `zones-data`             | string  | JSON object mapping zone keys to zone objects. Each zone: `{ page: number, ulx: number, uly: number, lrx: number, lry: number }`. See [Region Navigation](#region-navigation) for details. | `"{}"` |
-| `zone`                   | string  | Key of the zone to navigate to. Must exist in `zones-data`. Setting this attribute triggers navigation to the zone. | `""` |
-| `measures-data`          | string  | JSON object mapping measure keys to region objects `{ page, ulx, uly, lrx, lry }`. Lookup map for `measure`. See [Region Navigation](#region-navigation). | `"{}"` |
-| `measure`                | string  | Key of the measure to navigate to (must exist in `measures-data`). Append `\|<nonce>` to re-fire navigation to the same measure. | `""` |
-| `mdivs-data`             | string  | JSON object mapping movement (`mdiv`) keys to objects `{ page }` (with optional region). Lookup map for `mdiv`. See [Region Navigation](#region-navigation). | `"{}"` |
-| `mdiv`                   | string  | Key of the movement to navigate to (must exist in `mdivs-data`). Append `\|<nonce>` to re-fire navigation to the same movement. | `""` |
+| `zones-data`             | string  | JSON object mapping zone keys to zone objects. Each zone: `{ page: number, ulx: number, uly: number, lrx: number, lry: number }` (coordinates optional). Also used for measures and movements via host-chosen namespaced keys. See [Region Navigation](#region-navigation) for details. | `"{}"` |
+| `zone`                   | string  | Key of the zone to navigate to. Must exist in `zones-data`. Setting this attribute triggers navigation to the zone. Append `\|<nonce>` to re-fire navigation to the same zone. | `""` |
 | `annotations-data`       | string  | JSON array of annotation overlays. Each entry: `{ idPrefix, id, title, uri, categories, priority, fn, tooltip, plist }`, where `tooltip` is optional host-supplied HTML rendered by the component on hover and `plist` is an array of image-pixel regions `{ id, ulx, uly, lrx, lry, type }`. Rendered as clickable badges. See [Annotation Overlays](#annotation-overlays). | `"[]"` |
 | `show-annotations`       | boolean | Show/hide the rendered annotation overlays. Toggles `visibility` without discarding `annotations-data`; the last state persists across page changes. | `false` |
 | `visible-categories`     | string  | JSON array of category ids that should remain visible. `["undefined"]` (no category taxonomy) or absent shows all; `[]` hides all; otherwise a badge is shown only if one of its categories is listed. See [Annotation Overlays](#annotation-overlays). | `null` |
 | `visible-priorities`     | string  | JSON array of priority ids that should remain visible. Same `["undefined"]` / `[]` / list semantics as `visible-categories`. A badge is shown only when it passes **both** filters. | `null` |
-| `measure-numbers-data`   | string  | JSON array of measure-number overlay boxes. Each entry: `{ idPrefix, id, name, ulx, uly, lrx, lry }`. Rendered as labelled boxes on the current image. See [Measure Number Overlays](#measure-number-overlays). | `"[]"` |
-| `show-measure-numbers`   | boolean | Show/hide the rendered measure-number overlays. Toggles `visibility` without discarding `measure-numbers-data`; the last state persists across page changes. | `false` |
 | `fitrect`                | string  | Fit the viewport to an image-pixel rectangle `"x,y,width,height"`. An optional trailing `,<nonce>` token re-fires the same fit. | `""` |
 | `view-mode`              | string  | Declarative view mode (e.g. `pageBasedView` / `measureBasedView`). Recorded and re-broadcast via the `view-mode-changed` event for host code to react to. | `""` |
 
@@ -245,8 +235,6 @@ The component also fires dedicated semantic events:
 |----------------------|------------------------------|------------|
 | `page-changed`       | `{ pageNumber }` (1-based)   | The viewer navigates to a new page. |
 | `zone-changed`       | `{ zoneKey, zone }`          | Navigation to a `zone` completes. |
-| `measure-changed`    | `{ key, region }`            | Navigation to a `measure` completes. |
-| `mdiv-changed`       | `{ key, region }`            | Navigation to an `mdiv` completes. |
 | `view-mode-changed`  | `{ viewMode }`               | The `view-mode` attribute changes. |
 | `zoom`               | `{ zoom }`                   | The OpenSeadragon viewport zoom changes. |
 | `image-ready`        | —                            | The image/tiles have finished loading. |
@@ -259,30 +247,28 @@ viewer.addEventListener('page-changed', (event) => {
     console.log('Navigated to page:', event.detail.pageNumber);
 });
 
-viewer.addEventListener('measure-changed', (event) => {
-    console.log('Navigated to measure:', event.detail.key);
+viewer.addEventListener('zone-changed', (event) => {
+    console.log('Navigated to zone:', event.detail.zoneKey);
 });
 ```
 
 ## Region Navigation
 
-The component supports pixel-precise navigation to named rectangular regions on any page, independent of OSD's own sequence controls. Three parallel lookup maps share the same mechanism and the same region object shape:
+The component supports pixel-precise navigation to named rectangular regions (zones) on any page, independent of OSD's own sequence controls. A single lookup map drives all region navigation. Measures, movements and any other navigable region are expressed as ordinary zone entries — the host picks the key convention (e.g. namespaced `measure:...` / `mdiv:...` keys).
 
-| Lookup map      | Trigger attribute | Completion event   | Typical use |
-|-----------------|-------------------|--------------------|-------------|
-| `zones-data`    | `zone`            | `zone-changed`     | Generic named regions |
-| `measures-data` | `measure`         | `measure-changed`  | Music measures / bars |
-| `mdivs-data`    | `mdiv`            | `mdiv-changed`     | MEI `<mdiv>` movements (page-level, optional region) |
+| Lookup map   | Trigger attribute | Completion event | Typical use |
+|--------------|-------------------|------------------|-------------|
+| `zones-data` | `zone`            | `zone-changed`   | Any named region: generic zones, measures/bars, MEI `<mdiv>` movements |
 
 ### Region Object Format
 
-Each entry in a `*-data` map must have a 1-based `page` number and (for precise fits) pixel coordinates (`ulx`, `uly`, `lrx`, `lry`) defining the upper-left and lower-right corners of the region. Movements (`mdivs-data`) may carry only a `page` to navigate to the movement's first page without a region fit.
+Each entry in the `zones-data` map must have a 1-based `page` number and (for precise fits) pixel coordinates (`ulx`, `uly`, `lrx`, `lry`) defining the upper-left and lower-right corners of the region. An entry may carry only a `page` (no coordinates) to navigate to that page and show it whole — useful for movement first pages.
 
 ```json
 {
-  "measure_1": { "page": 1, "ulx": 100, "uly": 200, "lrx": 800, "lry": 600 },
-  "measure_2": { "page": 1, "ulx": 900, "uly": 200, "lrx": 1600, "lry": 600 },
-  "measure_3": { "page": 2, "ulx": 150, "uly": 300, "lrx": 950, "lry": 700 }
+  "measure:1": { "page": 1, "ulx": 100, "uly": 200, "lrx": 800, "lry": 600 },
+  "measure:2": { "page": 1, "ulx": 900, "uly": 200, "lrx": 1600, "lry": 600 },
+  "mdiv:mov2": { "page": 2 }
 }
 ```
 
@@ -292,17 +278,17 @@ Each entry in a `*-data` map must have a 1-based `page` number and (for precise 
 
 ### Push model: data map + trigger
 
-The `*-data` attribute is a **lookup map** (set once, performs no navigation on its own). The matching trigger attribute (`zone` / `measure` / `mdiv`) is the **navigation trigger** and must hold a key that exists in the map. To re-fire navigation to the **same** key, append a `|<nonce>` token to the trigger value — it is stripped before lookup:
+The `zones-data` attribute is a **lookup map** (set once, performs no navigation on its own). The `zone` attribute is the **navigation trigger** and must hold a key that exists in the map. To re-fire navigation to the **same** key, append a `|<nonce>` token to the trigger value — it is stripped before lookup:
 
 ```javascript
 let nonce = 0;
-viewer.setAttribute('measure', 'measure_1|' + (++nonce)); // jump
-viewer.setAttribute('measure', 'measure_1|' + (++nonce)); // jump again to the same measure
+viewer.setAttribute('zone', 'measure:1|' + (++nonce)); // jump
+viewer.setAttribute('zone', 'measure:1|' + (++nonce)); // jump again to the same zone
 ```
 
-Empty trigger values (`measure=""`, `mdiv=""`) are ignored, so they are safe as defaults in markup.
+An empty trigger value (`zone=""`) is ignored, so it is safe as a default in markup.
 
-### Example: Measure Navigation
+### Example: Zone Navigation
 
 ```html
 <edirom-image-viewer
@@ -310,8 +296,8 @@ Empty trigger values (`measure=""`, `mdiv=""`) are ignored, so they are safe as 
     sequencemode="true"
     showsequencecontrol="false"
     tilesources='[...]'
-    measures-data='{}'
-    measure="">
+    zones-data='{}'
+    zone="">
 </edirom-image-viewer>
 ```
 
@@ -319,16 +305,16 @@ Empty trigger values (`measure=""`, `mdiv=""`) are ignored, so they are safe as 
 const viewer = document.querySelector('#viewer');
 
 // Populate the lookup map
-viewer.setAttribute('measures-data', JSON.stringify({
-    measure_1: { page: 1, ulx: 100, uly: 200, lrx: 800, lry: 600 },
-    measure_2: { page: 2, ulx: 150, uly: 300, lrx: 950, lry: 700 }
+viewer.setAttribute('zones-data', JSON.stringify({
+    'measure:1': { page: 1, ulx: 100, uly: 200, lrx: 800, lry: 600 },
+    'mdiv:mov2': { page: 2 }
 }));
 
 // Trigger navigation
-viewer.setAttribute('measure', 'measure_2');
+viewer.setAttribute('zone', 'measure:1');
 
-viewer.addEventListener('measure-changed', (event) => {
-    console.log('Navigated to measure:', event.detail.key);
+viewer.addEventListener('zone-changed', (event) => {
+    console.log('Navigated to zone:', event.detail.zoneKey);
 });
 
 viewer.addEventListener('page-changed', (event) => {
@@ -355,54 +341,9 @@ viewer.addEventListener('view-mode-changed', (event) => {
 });
 ```
 
-## Measure Number Overlays
-
-In addition to *navigating* to measures (see [Region Navigation](#region-navigation)), the component can *render* labelled measure-number boxes directly on top of the current image. This uses a **push/persist model**: the host pushes the full set of boxes via `measure-numbers-data`, and toggles their visibility via `show-measure-numbers`. The component owns all rendering, showing, hiding and hover highlighting — the host never touches the DOM.
-
-### Data Format
-
-`measure-numbers-data` is a JSON **array** of overlay descriptors. Each entry defines one box in image-pixel coordinates:
-
-```json
-[
-  { "idPrefix": "viewer1", "id": "m1", "name": "1", "ulx": 100, "uly": 100, "lrx": 200, "lry": 300 },
-  { "idPrefix": "viewer1", "id": "m2", "name": "2", "ulx": 220, "uly": 100, "lrx": 320, "lry": 300 }
-]
-```
-
-| Field      | Description |
-|------------|-------------|
-| `idPrefix` | Prefix used (with `id`) to build the overlay's unique DOM id. |
-| `id`       | Measure id, combined with `idPrefix` into `idPrefix_id`. |
-| `name`     | Label shown inside the box (the measure number). An empty `name` is rendered with an "empty" style. |
-| `ulx`,`uly`| Upper-left corner of the box, in image pixels. |
-| `lrx`,`lry`| Lower-right corner of the box (box size is `lrx-ulx` × `lry-uly`). |
-
-### Persistent Show/Hide
-
-`show-measure-numbers` toggles the overlays' `visibility` (not `display`), so the pushed data is never discarded. The component remembers the last state and re-applies it to every freshly rendered page, so toggling once persists across page navigation until toggled again. Pushing a new `measure-numbers-data` re-renders the boxes and re-applies the current visibility.
-
-```javascript
-const viewer = document.querySelector('edirom-image-viewer');
-
-// Push the measure boxes for the current page
-viewer.setAttribute('measure-numbers-data', JSON.stringify([
-    { idPrefix: 'viewer1', id: 'm1', name: '1', ulx: 100, uly: 100, lrx: 200, lry: 300 },
-    { idPrefix: 'viewer1', id: 'm2', name: '2', ulx: 220, uly: 100, lrx: 320, lry: 300 }
-]));
-
-// Show them
-viewer.setAttribute('show-measure-numbers', 'true');
-
-// Hide them (data is kept, just hidden)
-viewer.setAttribute('show-measure-numbers', 'false');
-```
-
-> **Note:** `measure-numbers-data` / `show-measure-numbers` (overlay *rendering*) are independent of `measures-data` / `measure` (region *navigation*). They can be used together or separately.
-
 ## Annotation Overlays
 
-The component renders clickable **annotation badges** on top of the current image using the same **push/persist model** as the measure-number overlays: the host pushes the full set of annotations via `annotations-data`, toggles their visibility via `show-annotations`, and narrows them down by category/priority via `visible-categories` / `visible-priorities`. The component owns all rendering, showing, hiding and filtering — the host never touches the DOM.
+The component renders clickable **annotation badges** on top of the current image using a **push/persist model**: the host pushes the full set of annotations via `annotations-data`, toggles their visibility via `show-annotations`, and narrows them down by category/priority via `visible-categories` / `visible-priorities`. The component owns all rendering, showing, hiding and filtering — the host never touches the DOM.
 
 ### `annotations-data` format
 
