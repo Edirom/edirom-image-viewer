@@ -1,7 +1,3 @@
-
-console.log("Image Viewer loaded!");
-
-
 /**
  * Custom Web Component for viewing IIIF images using the OpenSeadragon viewer.
  * 
@@ -19,10 +15,7 @@ console.log("Image Viewer loaded!");
  * @attribute {number} pagenumber - The current page/image number to display (for multi-image sequences).
  * @attribute {number} zoom - The zoom level for the viewer.
  * @attribute {number} rotation - The rotation angle in degrees (0-360).
- * @attribute {boolean} preserveviewport - Whether to preserve viewport when changing pages.
  * @attribute {boolean} clicktozoom - Enable/disable click-to-zoom functionality.
- * @attribute {number} minzoomlevel - Minimum allowed zoom level.
- * @attribute {number} maxzoomlevel - Maximum allowed zoom level.
  * @attribute {boolean} shownavigationcontrol - Show/hide all navigation controls.
  * @attribute {boolean} sequencemode - Enable sequence mode for multiple images.
  * @attribute {boolean} shownavigator - Show/hide the navigator mini-map.
@@ -33,34 +26,17 @@ console.log("Image Viewer loaded!");
  * @attribute {string} triggerhome - Trigger attribute to reset view to home position.
  * @attribute {string} triggerfullscreen - Trigger attribute to toggle fullscreen mode.
  * @attribute {object|string} openseadragon-options - Additional OpenSeadragon configuration options as JSON object.
- * 
- * @attribute {string} zones-data - JSON object mapping zone keys to zone objects.
- *   Each zone: { type: string, page?: number, ulx?: number, uly?: number,
- *   lrx?: number, lry?: number, containerClass?: string, innerClass?: string,
- *   label?: string, group?: string, title?: string, tooltip?: string,
- *   fn?: string, dataId?: string, filters?: string }. `filters` is a
- *   space-separated list of opaque filter tokens used by `hidden-filters`.
- *   The `type` is an opaque string the host assigns (e.g. "measure", "mdiv",
- *   "annotation"). A single map drives BOTH navigation and overlay rendering,
- *   so the component is independent of any source format (MEI, TEI, …).
- * @attribute {string} zone - Key of the zone to navigate to (must exist in zones-data).
- *   An optional trailing "|nonce" is stripped before lookup so that repeating
- *   the same zone still re-fires attributeChangedCallback.
- * @attribute {string} visible-types - JSON array of zone `type`s to render as
- *   visible overlays (e.g. ["annotation"]). [] / absent renders nothing;
- *   navigation is unaffected by this set.
- * @attribute {string} hidden-filters - JSON array of opaque filter tokens to
- *   hide. A rendered overlay is hidden when any of its zone's `filters` tokens
- *   is in this set. [] / absent hides nothing. The host maps its own
- *   taxonomies (e.g. annotation categories/priorities) onto these tokens.
+ * @attribute {number} ulx - Upper-left x coordinate (pixels) of a rectangle to zoom to; defaults to image width if unset.
+ * @attribute {number} uly - Upper-left y coordinate (pixels) of a rectangle to zoom to; defaults to image height if unset.
+ * @attribute {number} lrx - Lower-right x coordinate (pixels) of a rectangle to zoom to; defaults to image width if unset.
+ * @attribute {number} lry - Lower-right y coordinate (pixels) of a rectangle to zoom to; defaults to image height if unset.
  * 
  * @fires communicate-[property]-update - Fired when a property is updated via attribute change.
- * @fires page-changed - Fired when the viewer navigates to a new page. detail: { pageNumber } (1-based).
- * @fires zone-changed - Fired when the viewer navigates to a zone. detail: { zoneKey, zone }.
  * 
  * @method nextPage - Navigate to the next page in a sequence.
  * @method previousPage - Navigate to the previous page in a sequence.
  * @method goToPage - Navigate to a specific page number.
+ * @method jumpToZone - Navigate to a specific page and zoom to a defined zone.
  * @method getCurrentPage - Get the current page number.
  * @method getTotalPages - Get the total number of pages.
  * @method zoomIn - Zoom in by 20%.
@@ -75,15 +51,14 @@ console.log("Image Viewer loaded!");
  * @method setRotation - Set rotation to specific angle.
  * @method getRotation - Get current rotation angle.
  */
-class EdiromOpenseadragon extends HTMLElement {
+class EdiromImageViewer extends HTMLElement {
     /**
-     * Creates an instance of EdiromOpenseadragon.
+     * Creates an instance of EdiromImageViewer.
      * @constructor
      */
     constructor() {
         super();
         this.attachShadow({ mode: 'open' });
-        console.log("Constructor called");
 
         /** @type {OpenSeadragon.Viewer} OpenSeadragon viewer instance */
         this.openSeaDragon = null;
@@ -91,79 +66,28 @@ class EdiromOpenseadragon extends HTMLElement {
         /** @type {number} Total number of tile sources (images/pages) */
         this.totalTileSources = 0;
         
-        /**
-         * @type {Object} Zone lookup map parsed from the zones-data attribute.
-         * Keyed by an arbitrary zone key; each entry is a region that carries a
-         * `type` (an opaque string such as 'measure', 'mdiv' or 'annotation')
-         * plus an optional 1-based `page`, optional image-pixel coordinates
-         * {ulx, uly, lrx, lry} and optional render metadata (containerClass,
-         * innerClass, label, group, title, tooltip, fn, dataId, filters). A
-         * single map drives BOTH region navigation (via the `zone`
-         * attribute) and overlay rendering, so the component stays independent
-         * of any particular data format (MEI, TEI, …): the host decides what
-         * each zone means through its `type` and the CSS classes it supplies.
-         */
-        this._zonesData = {};
-
-        /**
-         * @type {?Array<string>} Zone types that should be rendered as visible
-         * overlays, pushed via the `visible-types` attribute. null / [] means
-         * render nothing; e.g. ['annotation'] renders annotation zones only.
-         * Navigation is independent of this set (any zone can be navigated to
-         * regardless of whether its type is rendered).
-         */
-        this._visibleTypes = [];
-
-        /**
-         * @type {Object<string,HTMLElement>} group-keyed shared overlay
-         * containers for the currently rendered zones. Zones sharing a `group`
-         * (e.g. several annotations on the same measure) share one container so
-         * their inner elements stack instead of overlapping.
-         */
-        this._overlayContainers = {};
-
-        /**
-         * @type {Array<Object>} Flat list of every rendered overlay inner
-         * element, each entry { element, containerId, filters }. `filters` is
-         * the zone's array of opaque filter tokens. Used by the generic
-         * hidden-filters mechanism so overlays can be shown/hidden individually
-         * without re-pushing or re-rendering zones-data.
-         */
-        this._overlayBadges = [];
-
-        /**
-         * @type {?HTMLElement} The single reusable overlay tooltip element
-         * rendered in the shadow DOM. The host preloads each zone's
-         * server-rendered tooltip HTML into the `tooltip` field of its
-         * zones-data entry, and the component renders/positions it on hover.
-         */
-        this._annotTipEl = null;
-
-        /**
-         * @type {?number} Pending hide timer for the annotation tooltip, used
-         * to add a short grace period so the pointer can travel into the tip.
-         */
-        this._annotTipHideTimer = null;
-
-        /**
-         * @type {?Array<string>} Opaque filter tokens that should be HIDDEN,
-         * pushed via the `hidden-filters` attribute. null / [] means "nothing
-         * hidden" (show all). A rendered overlay is hidden when ANY of its
-         * zone's `filters` tokens is in this set. The component does not know
-         * what the tokens mean (categories, priorities, tags, …); the host maps
-         * its own taxonomies onto them, keeping the component format-agnostic.
-         */
-        this._hiddenFilters = null;
-
-        /** @type {string|null} Key of the currently active zone, or null */
-        this._currentZoneKey = null;
-
-        /** @type {Object|null} Zone waiting to be applied after an OSD page change completes */
-        this._pendingZoneAfterPageChange = null;
-
         /** @type {object} Additional OpenSeadragon options */
-        this.options = this.getAttribute('openseadragon-options') ? 
-            JSON.parse(this.getAttribute('openseadragon-options')) : {};
+        try {
+            this.options = this.getAttribute('openseadragon-options') ? 
+                JSON.parse(this.getAttribute('openseadragon-options')) : {};
+        } catch (e) {
+            console.error('Invalid openseadragon-options JSON:', e);
+            this.options = {};
+        }
+
+        /** @private */
+        this._onFullScreenChange = () => this.updateFullScreenButtonState();
+
+        /** @private */
+        this._restrictZoneConfig = null;
+        /** @private */
+        this._isClamping = false;
+        /** @private */
+        this._enforceRestrictionHandler = () => this.enforceRestriction(true);
+        /** @private */
+        this._onlyRevealZones = [];
+        /** @private */
+        this._updateRevealOverlayHandler = () => this.updateRevealOverlay();
     }
 
     /**
@@ -172,7 +96,7 @@ class EdiromOpenseadragon extends HTMLElement {
      * @returns {Array<string>} The list of observed attributes.
      */
     static get observedAttributes() {
-        return ['preserveviewport', 'clicktozoom', 'minzoomlevel', 'maxzoomlevel', 'shownavigationcontrol', 'sequencemode', 'shownavigator', 'showzoomcontrol', 'showhomecontrol', 'showfullpagecontrol', 'showsequencecontrol', 'tilesources', 'pagenumber', 'zoom', 'rotation', 'triggerhome', 'triggerfullscreen', 'openseadragon-options', 'zones-data', 'zone', 'visible-types', 'hidden-filters', 'fitrect', 'view-mode'];
+        return ['preserveviewport', 'clicktozoom', 'visibilityratio', 'minzoomlevel', 'maxzoomlevel', 'shownavigationcontrol', 'sequencemode', 'shownavigator', 'showzoomcontrol', 'showhomecontrol', 'showfullpagecontrol', 'showsequencecontrol', 'tilesources', 'pagenumber', 'zoom', 'rotation', 'triggerhome', 'triggerfullscreen', 'openseadragon-options', 'ulx', 'uly', 'lrx', 'lry', 'restrict-to-zone', 'only-reveal-zones'];
     }
 
     /**
@@ -200,7 +124,11 @@ class EdiromOpenseadragon extends HTMLElement {
         
         // custom event for property update
         const event = new CustomEvent('communicate-' + property + '-update', {
-            detail: { [property]: newPropertyValue },
+            detail: {
+                element: this.tagName.toLowerCase(),
+                property: property,
+                value: newPropertyValue
+            },
             bubbles: true
         });
         this.dispatchEvent(event);
@@ -214,96 +142,118 @@ class EdiromOpenseadragon extends HTMLElement {
      * Loads the OpenSeadragon library and initializes the viewer container.
      */
     connectedCallback() {
-        console.log("Image Viewer connected to DOM!");
-        
-        // Add host styles
+        console.log("Connected to DOM");
+
+        // Scoped styles
         const style = document.createElement('style');
         style.textContent = `
             :host {
-                display: block;
+                display: flex;
+                flex-direction: column;
+                overflow: hidden;
+            }
+            #toolbar {
+                display: flex;
+                align-items: center;
+                gap: 4px;
+                padding: 4px 8px;
+                background: #f5f5f5;
+                border-bottom: 1px solid #ddd;
+                flex-shrink: 0;
+            }
+            #toolbar button {
+                display: inline-flex;
+                align-items: center;
+                justify-content: center;
+                width: 32px;
+                height: 32px;
+                border: 1px solid #ccc;
+                border-radius: 4px;
+                background: #fff;
+                cursor: pointer;
+                color: #333;
+                padding: 0;
+            }
+            #toolbar button:hover {
+                background: #e8e8e8;
+            }
+            #toolbar button:active {
+                background: #ddd;
+            }
+            #page-input {
+                width: 60px;
+                height: 32px;
+                border: 1px solid #ccc;
+                border-radius: 4px;
+                padding: 0 8px;
+                text-align: center;
+                font-size: 14px;
+                font-family: monospace;
+            }
+            #page-input:focus {
+                outline: 2px solid #0078d4;
+                outline-offset: 0;
+            }
+            #viewer {
+                flex: 1;
+                min-height: 0;
                 width: 100%;
                 height: 100%;
+                position: relative;
             }
         `;
         this.shadowRoot.appendChild(style);
 
-        console.log("Connected to DOM");
+        // Load OpenSeadragon
+        const osdScript = document.createElement('script');
+        osdScript.src = "https://cdnjs.cloudflare.com/ajax/libs/openseadragon/4.1.1/openseadragon.min.js";
+        osdScript.defer = true;
+        this.shadowRoot.appendChild(osdScript);
 
-        // Inject the overlay stylesheets into the shadow root, since main-document
-        // class rules do not cross the shadow boundary:
-        //   - annotation-style.css : per-category annotIcon glyph rules
-        //   - font-awesome.min.css : FontAwesome icon rules used by some annotIcons
-        // The Bravura / FontAwesome @font-face declarations are NOT duplicated here:
-        // @font-face is resolved document-wide, so the fonts registered by the main
-        // page (theme bundle + font-awesome.min.css) are usable by shadow content.
-        // That keeps annotation-style.css identical to develop (no font/.hidden dups).
-        const cssFiles = [
-            'resources/css/annotation-style.css',
-            'resources/css/font-awesome.min.css'
-        ];
-        cssFiles.forEach(href => {
-            const link = document.createElement('link');
-            link.rel = 'stylesheet';
-            link.href = href;
-            this.shadowRoot.appendChild(link);
-        });
-
-        // Also inject the EDITION's own stylesheet — the same one Application.js
-        // loads into the document <head> from the 'additional_css_path' preference.
-        // Edition-specific annotation styling (e.g. the per-category glyph rules in
-        // an edition's annotation-style.css) lives there, and main-document
-        // stylesheets do not cross the shadow boundary. Cloning the existing head
-        // link keeps this edition-agnostic: any edition that sets additional_css_path
-        // gets its CSS applied to the overlays in this shadow root.
-        try {
-            const cssPref = (typeof getPreference === 'function')
-                ? getPreference('additional_css_path', true) : null;
-            if (cssPref && cssPref.indexOf('/db/') !== -1) {
-                const tail = cssPref.split('/db/')[1];
-                const editionLink = Array.prototype.slice
-                    .call(document.head.querySelectorAll('link[rel="stylesheet"]'))
-                    .find(l => l.href && l.href.indexOf(tail) !== -1);
-                if (editionLink) {
-                    const clone = document.createElement('link');
-                    clone.rel = 'stylesheet';
-                    clone.href = editionLink.href;
-                    this.shadowRoot.appendChild(clone);
-                }
-            }
-        } catch (e) {
-            console.warn('Image Viewer: could not inject edition stylesheet', e);
-        }
+        // Create toolbar
+        this.createToolbar();
 
         // Create a div for the OpenSeadragon viewer
         this.viewerDiv = document.createElement('div');
         this.viewerDiv.id = 'viewer';
-        this.viewerDiv.style.width = '100%';
-        this.viewerDiv.style.height = '100%';
         this.shadowRoot.appendChild(this.viewerDiv);
 
-        // Load OSD script into document.head so it runs in the global scope
-        // (scripts appended to shadow root do not execute)
-        if (!document.getElementById('osd-script')) {
-            const osdScript = document.createElement('script');
-            osdScript.id = 'osd-script';
-            osdScript.src = "https://cdnjs.cloudflare.com/ajax/libs/openseadragon/4.1.1/openseadragon.min.js";
-            osdScript.onload = () => {
-                if (window.OpenSeadragon) {
-                    this.set('tilesources', this.getAttribute('tilesources'));
-                }
-            };
-            document.head.appendChild(osdScript);
-        } else if (window.OpenSeadragon) {
-            // Script already loaded
-            this.set('tilesources', this.getAttribute('tilesources'));
-        } else {
-            // Script tag exists but not yet loaded — wait for it
-            document.getElementById('osd-script').addEventListener('load', () => {
-                if (window.OpenSeadragon) {
-                    this.set('tilesources', this.getAttribute('tilesources'));
-                }
-            });
-        }
+        // Overlay to hide everything except reveal zones
+        this.revealOverlay = document.createElement('div');
+        this.revealOverlay.id = 'reveal-overlay';
+        Object.assign(this.revealOverlay.style, {
+            position: 'absolute',
+            inset: '0',
+            pointerEvents: 'none',
+            background: 'transparent',
+            display: 'none',
+            maskRepeat: 'no-repeat',
+            maskPosition: '0 0',
+            maskSize: '100% 100%',
+            WebkitMaskRepeat: 'no-repeat',
+            WebkitMaskPosition: '0 0',
+            WebkitMaskSize: '100% 100%',
+            zIndex: '10'
+        });
+        this.viewerDiv.appendChild(this.revealOverlay);
+
+        // Callback when the script is loaded
+        osdScript.onload = () => {
+            if (window.OpenSeadragon) {
+                this.set('tilesources', this.getAttribute('tilesources'));
+            }
+        };
+
+        osdScript.onerror = () => {
+            console.error("Failed to load OpenSeadragon script");
+        };
+
+        document.addEventListener('fullscreenchange', this._onFullScreenChange);
+        this.updateFullScreenButtonState();
+    }
+
+    disconnectedCallback() {
+        document.removeEventListener('fullscreenchange', this._onFullScreenChange);
     }
 
     /**
@@ -317,20 +267,16 @@ class EdiromOpenseadragon extends HTMLElement {
       
             // handle tileSources property change
             case 'tilesources':
+                // Clear tileSources from options when tilesources attribute is explicitly set
+                if (this.options.tileSources) {
+                    delete this.options.tileSources;
+                }
+                // Destroy existing viewer to ensure complete replacement
+                if(this.openSeaDragon) {
+                    this.openSeaDragon.destroy();
+                    this.openSeaDragon = null;
+                }
                 this.displayOpenSeadragon();
-                // Announce the new page total ONLY when the tile sources actually
-                // change (not on the viewer recreations triggered by sequencemode
-                // or control-visibility toggles, which reuse the current/stale
-                // sources). Fire only for a real, non-empty, changed count so a
-                // transient empty/rebuild state never resets host pagination.
-                try {
-                    const parsedSources = JSON.parse(newPropertyValue);
-                    const total = Array.isArray(parsedSources) ? parsedSources.length : 1;
-                    if (total > 0 && total !== this._lastAnnouncedTotal) {
-                        this._lastAnnouncedTotal = total;
-                        this._fireTotalPagesChanged(total);
-                    }
-                } catch (e) { /* invalid tilesources JSON: nothing to announce */ }
                 break;
             
             case 'pagenumber':
@@ -346,31 +292,80 @@ class EdiromOpenseadragon extends HTMLElement {
                 break;
             
             case 'triggerhome':
-                this.home();
+                if(newPropertyValue === 'true') {
+                    this.home();
+                }
                 break;
             
             case 'triggerfullscreen':
-                this.toggleFullScreen();
+                if(newPropertyValue === 'true') {
+                    this.toggleFullScreen();
+                }
                 break;
             
             case 'openseadragon-options':
-                this.options = JSON.parse(newPropertyValue);
+                try {
+                    this.options = JSON.parse(newPropertyValue);
+                    // If tileSources is in options, clear the tilesources attribute
+                    // so that options take priority
+                    if (this.options.tileSources) {
+                        this.tilesources = '';
+                    }
+                    // Destroy existing viewer to ensure complete replacement
+                    if(this.openSeaDragon) {
+                        this.openSeaDragon.destroy();
+                        this.openSeaDragon = null;
+                    }
+                    // If tileSources is in options, rebuild the viewer even if it doesn't exist yet
+                    if (this.options.tileSources || this.tilesources) {
+                        this.displayOpenSeadragon();
+                    }
+                } catch (e) {
+                    console.error('Invalid openseadragon-options JSON:', e);
+                }
+                break;
+
+            case 'ulx':
+            case 'uly':
+            case 'lrx':
+            case 'lry':
+                if(this.openSeaDragon) {
+                    this.applyRegionZoom();
+                }
+                break;
+
+            case 'restrict-to-zone':
+                this._restrictZoneConfig = this.parseRestrictZoneConfig(newPropertyValue);
+                if(this.openSeaDragon) {
+                    this.enforceRestriction(true);
+                }
+                break;
+
+            case 'only-reveal-zones':
+                this._onlyRevealZones = this.parseOnlyRevealZones(newPropertyValue);
+                if (this.openSeaDragon) {
+                    this.updateRevealOverlay();
+                }
+                break;
+
+            case 'preserveviewport':
+            case 'visibilityratio':
+            case 'minzoomlevel':
+            case 'maxzoomlevel':
+            case 'sequencemode':
+            case 'shownavigator':
+                // These OpenSeadragon properties require recreating the viewer
                 if(this.openSeaDragon) {
                     this.displayOpenSeadragon();
                 }
                 break;
 
-            case 'preserveviewport':
-            case 'minzoomlevel':
-            case 'maxzoomlevel':
             case 'shownavigationcontrol':
-            case 'sequencemode':
-            case 'showfullpagecontrol':
-            case 'shownavigator':
             case 'showzoomcontrol':
             case 'showhomecontrol':
+            case 'showfullpagecontrol':
             case 'showsequencecontrol':
-                // These control visibility properties require recreating the viewer
+                // These OSD control attributes require recreating the viewer
                 if(this.openSeaDragon) {
                     this.displayOpenSeadragon();
                 }
@@ -378,99 +373,9 @@ class EdiromOpenseadragon extends HTMLElement {
             
             case 'clicktozoom':
                 if(this.openSeaDragon) {
-                    this.openSeaDragon.gestureSettingsMouse.clickToZoom = newPropertyValue === 'true';
+                    this.openSeaDragon.gestureSettingsMouse.clickToZoom = newPropertyValue !== 'false';
                 }
                 break;
-
-            case 'zones-data':
-                try {
-                    this._zonesData = JSON.parse(newPropertyValue) || {};
-                } catch (e) {
-                    console.error('Invalid zones-data JSON:', e);
-                    this._zonesData = {};
-                }
-                // If a zone key is already active, re-apply it against the new data.
-                if (this._currentZoneKey) {
-                    this._applyZoneByKey(this._currentZoneKey);
-                }
-                // Re-render the visible overlays for the current page from the
-                // new data (annotations, measure labels, …).
-                this._renderOverlays();
-                break;
-
-            // Jump to a specific zone (by the key used in zones-data). An
-            // optional trailing "|nonce" makes repeated jumps to the same zone
-            // re-fire this handler; the nonce is stripped before lookup. Host
-            // pushes measures / movements / annotations as ordinary zone
-            // entries, so this is the single navigation entry point for all
-            // region jumps.
-            case 'zone': {
-                const zoneKey = String(newPropertyValue).split('|')[0];
-                // Ignore the empty default value (zone="") set in markup so it
-                // does not log a "not found" warning on viewer creation.
-                if (zoneKey) this._applyZoneByKey(zoneKey);
-                break;
-            }
-
-            // Which zone `type`s are rendered as visible overlays (push model,
-            // format-independent). The host pushes a JSON array of type strings
-            // when the "show annotations" / "show measures" buttons are toggled;
-            // [] hides everything. Navigation is unaffected.
-            case 'visible-types':
-                try {
-                    this._visibleTypes = JSON.parse(newPropertyValue) || [];
-                } catch (e) {
-                    console.error('Invalid visible-types JSON:', e);
-                    this._visibleTypes = [];
-                }
-                this._renderOverlays();
-                break;
-
-            // Generic overlay filter (push model). The host pushes the set of
-            // filter tokens to HIDE as a JSON array whenever the user toggles a
-            // filter menu. A rendered overlay is hidden when any of its zone's
-            // `filters` tokens is in the set. The component neither re-pushes
-            // zones-data nor re-renders, and re-applies the filter to every
-            // freshly rendered page.
-            case 'hidden-filters':
-                try {
-                    this._hiddenFilters = JSON.parse(newPropertyValue);
-                } catch (e) {
-                    console.error('Invalid hidden-filters JSON:', e);
-                    this._hiddenFilters = null;
-                }
-                this._applyOverlayVisibility();
-                this._emitFilterChanged();
-                break;
-
-            // Fit the viewport to an image-pixel rectangle. Value format:
-            // "x,y,width,height" with an optional trailing nonce token that is
-            // ignored — the nonce only exists so that repeating the SAME jump
-            // produces a different attribute value and thus re-fires
-            // attributeChangedCallback (used for direct rectangle navigation).
-            case 'fitrect':
-                if (newPropertyValue) {
-                    const parts = String(newPropertyValue).split(',');
-                    if (parts.length >= 4) {
-                        this.fitImageRect(
-                            parseFloat(parts[0]), parseFloat(parts[1]),
-                            parseFloat(parts[2]), parseFloat(parts[3]));
-                    }
-                }
-                break;
-
-            // Declarative view mode (e.g. 'pageBasedView' / 'measureBasedView').
-            // The component records the mode and re-broadcasts it so host code
-            // can react; the actual page/measure layout swap is owned by the
-            // surrounding ExtJS views.
-            case 'view-mode':
-                this._viewMode = newPropertyValue;
-                this.dispatchEvent(new CustomEvent('view-mode-changed', {
-                    detail: { viewMode: newPropertyValue },
-                    bubbles: true
-                }));
-                break;
-
             // handle default
             default:  
               console.log("Invalid property: '"+property+"'");
@@ -480,53 +385,174 @@ class EdiromOpenseadragon extends HTMLElement {
     }
 
     /**
+     * Creates a single toolbar button with an SVG icon.
+     * @param {string} label - Accessible label for the button.
+     * @param {string} title - Tooltip text.
+     * @param {string} svgContent - Inner SVG markup for the icon.
+     * @param {Function} clickHandler - Click event handler.
+     * @returns {HTMLButtonElement} The created button element.
+     */
+    createButton(label, title, svgContent, clickHandler) {
+        const button = document.createElement('button');
+        button.setAttribute('aria-label', label);
+        button.setAttribute('title', title);
+        button.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${svgContent}</svg>`;
+        button.addEventListener('click', (e) => {
+            e.preventDefault();
+            clickHandler();
+        });
+        return button;
+    }
+
+    /**
+     * Creates the custom toolbar with navigation buttons and appends it to the shadow DOM.
+     * Called once during connectedCallback.
+     */
+    createToolbar() {
+        console.log("Creating toolbar");
+        this.toolbar = document.createElement('div');
+        this.toolbar.id = 'toolbar';
+
+        // Zoom controls
+        this.btnZoomIn = this.createButton('Zoom in', 'Zoom in',
+            '<circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/><line x1="11" y1="8" x2="11" y2="14"/><line x1="8" y1="11" x2="14" y2="11"/>',
+            () => this.zoomIn());
+
+        this.btnZoomOut = this.createButton('Zoom out', 'Zoom out',
+            '<circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/><line x1="8" y1="11" x2="14" y2="11"/>',
+            () => this.zoomOut());
+
+        // Home control
+        this.btnHome = this.createButton('Reset view', 'Reset view',
+            '<path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/>',
+            () => this.home());
+
+        // Fullscreen control
+        this.btnFullScreen = this.createButton('Toggle fullscreen', 'Toggle fullscreen',
+            '<polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/><line x1="21" y1="3" x2="14" y2="10"/><line x1="3" y1="21" x2="10" y2="14"/>',
+            () => this.toggleFullScreen());
+
+        // Sequence controls
+        this.btnPrevPage = this.createButton('Previous page', 'Previous page',
+            '<polyline points="15 18 9 12 15 6"/>',
+            () => this.previousPage());
+
+        this.btnNextPage = this.createButton('Next page', 'Next page',
+            '<polyline points="9 18 15 12 9 6"/>',
+            () => this.nextPage());
+
+        // Page number input
+        this.pageInput = document.createElement('input');
+        this.pageInput.id = 'page-input';
+        this.pageInput.type = 'text';
+        this.pageInput.setAttribute('aria-label', 'Page number');
+        this.pageInput.setAttribute('title', 'Enter page number and press Enter');
+        this.pageInput.value = '1';
+        
+        this.pageInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                const pageNum = parseInt(this.pageInput.value);
+                if (!isNaN(pageNum) && pageNum >= 1 && pageNum <= this.getTotalPages()) {
+                    this.goToPage(pageNum);
+                    // Update input after navigation to ensure it reflects the new page
+                    setTimeout(() => this.updatePageInput(), 0);
+                } else {
+                    // Reset to current page if invalid
+                    this.pageInput.value = this.getCurrentPage().toString();
+                }
+                this.pageInput.blur();
+            }
+        });
+
+        this.toolbar.appendChild(this.btnZoomIn);
+        this.toolbar.appendChild(this.btnZoomOut);
+        this.toolbar.appendChild(this.btnHome);
+        this.toolbar.appendChild(this.btnFullScreen);
+        this.toolbar.appendChild(this.btnPrevPage);
+        this.toolbar.appendChild(this.pageInput);
+        this.toolbar.appendChild(this.btnNextPage);
+
+        this.shadowRoot.appendChild(this.toolbar);
+    }
+
+    /**
      * Initializes or reinitializes the OpenSeadragon viewer with current settings.
      * Handles both IIIF manifest URLs and direct tile sources.
      * For IIIF manifests, fetches and parses the manifest to extract image URLs.
      */
     displayOpenSeadragon() {
+        // Ensure the viewer container exists before initialization
+        if (!this.shadowRoot || !this.shadowRoot.getElementById('viewer')) {
+            return;
+        }
+
         if (window.OpenSeadragon) {
 
             if(this.openSeaDragon) {
+                console.log('Destroying existing viewer');
                 this.openSeaDragon.destroy();
             }
 
-            const tileSources = JSON.parse(this.tilesources);
-            
-            // Check if it's a IIIF manifest URL (string ending with .json)
-            if (Array.isArray(tileSources) && tileSources.length === 1 && 
-                typeof tileSources[0] === 'string' && tileSources[0].includes('manifest')) {
+            try {
+                // Determine which tile sources to use
+                // Priority: openseadragon-options.tileSources > tilesources attribute
+                let tileSources = null;
                 
-                // Fetch and parse the IIIF manifest
-                fetch(tileSources[0])
-                    .then(response => response.json())
-                    .then(manifest => {
-                        const imageUrls = [];
-                        
-                        // Extract image info.json URLs from IIIF Presentation API manifest
-                        if (manifest.sequences && manifest.sequences[0] && manifest.sequences[0].canvases) {
-                            manifest.sequences[0].canvases.forEach(canvas => {
-                                if (canvas.images && canvas.images[0] && canvas.images[0].resource) {
-                                    const service = canvas.images[0].resource.service;
-                                    if (service) {
-                                        const serviceId = service['@id'] || service.id;
-                                        imageUrls.push(serviceId + '/info.json');
+                if (this.options.tileSources) {
+                    console.log('Using tileSources from openseadragon-options');
+                    tileSources = Array.isArray(this.options.tileSources) 
+                        ? this.options.tileSources 
+                        : [this.options.tileSources];
+                } else if (this.tilesources && this.tilesources.trim()) {
+                    console.log('Using tilesources attribute');
+                    tileSources = JSON.parse(this.tilesources);
+                } else {
+                    tileSources = [];
+                }
+                
+                console.log('Parsed tile sources:', tileSources);
+                
+                // Check if it's a IIIF manifest URL (string ending with .json)
+                if (Array.isArray(tileSources) && tileSources.length === 1 && 
+                    typeof tileSources[0] === 'string' && tileSources[0].includes('manifest')) {
+                    
+                    console.log('Loading IIIF manifest...');
+                    // Fetch and parse the IIIF manifest
+                    fetch(tileSources[0])
+                        .then(response => response.json())
+                        .then(manifest => {
+                            const imageUrls = [];
+                            
+                            // Extract image info.json URLs from IIIF Presentation API manifest
+                            if (manifest.sequences && manifest.sequences[0] && manifest.sequences[0].canvases) {
+                                manifest.sequences[0].canvases.forEach(canvas => {
+                                    if (canvas.images && canvas.images[0] && canvas.images[0].resource) {
+                                        const service = canvas.images[0].resource.service;
+                                        if (service) {
+                                            const serviceId = service['@id'] || service.id;
+                                            imageUrls.push(serviceId + '/info.json');
+                                        }
                                     }
-                                }
-                            });
-                        }
-                        
-                        // Initialize OpenSeadragon with extracted image URLs
-                        this.initializeViewer(imageUrls);
-                    })
-                    .catch(error => {
-                        console.error('Error loading IIIF manifest:', error);
-                        // Try to load as regular tile sources
-                        this.initializeViewer(tileSources);
-                    });
-            } else {
-                // Direct tile sources (not a manifest URL)
-                this.initializeViewer(tileSources);
+                                });
+                            }
+                            
+                            console.log('Extracted image URLs:', imageUrls);
+                            // Initialize OpenSeadragon with extracted image URLs
+                            this.initializeViewer(imageUrls);
+                        })
+                        .catch(error => {
+                            console.error('Error loading IIIF manifest:', error);
+                            // Try to load as regular tile sources
+                            this.initializeViewer(tileSources);
+                        });
+                } else {
+                    // Direct tile sources (not a manifest URL)
+                    console.log('Loading direct tile sources');
+                    this.initializeViewer(tileSources);
+                }
+            } catch (error) {
+                console.error('Error parsing tile sources:', error);
             }
         } else {
             console.error('OpenSeadragon library is not loaded.');
@@ -539,140 +565,218 @@ class EdiromOpenseadragon extends HTMLElement {
      * @param {Array} tileSources - Array of tile source URLs or objects.
      */
     initializeViewer(tileSources) {
-        console.log('initializeViewer called with:', tileSources);
-        console.log('Viewer div:', this.viewerDiv);
-        console.log('OpenSeadragon available:', !!window.OpenSeadragon);
-        
-        if (!window.OpenSeadragon) {
-            console.error('OpenSeadragon library not available');
-            return;
-        }
-        
-        try {
-            // Store the tile sources count
-            this.totalTileSources = Array.isArray(tileSources) ? tileSources.length : 1;
+        this.openSeaDragon = OpenSeadragon({
+            element: this.shadowRoot.getElementById('viewer'),
+            preserveViewport: this.preserveviewport !== 'false',
+            visibilityRatio: parseFloat(this.visibilityratio) || 1.0,
+            minZoomLevel: parseFloat(this.minzoomlevel) || 0.5,
+            defaultZoomLevel: parseFloat(this.defaultzoomlevel) || null,
+            maxZoomLevel: parseFloat(this.maxzoomlevel) || 10,
+            // OSD built-in controls are hidden by default; set attribute to 'true' to show
+            showNavigationControl: this.shownavigationcontrol === 'true',
+            tileSources: tileSources,
+            showNavigator: this.shownavigator !== 'false',
+            showZoomControl: this.showzoomcontrol === 'true',
+            showHomeControl: this.showhomecontrol === 'true',
+            // Disable OSD full page control to avoid DOM reparenting; we handle fullscreen ourselves
+            showFullPageControl: false,
+            showSequenceControl: this.showsequencecontrol === 'true',
+            sequenceMode: this.sequencemode !== 'false',
+            gestureSettingsMouse: {
+                clickToZoom: this.clicktozoom !== 'false',
+            },
+            // Merge additional options from openseadragon-options attribute
+            ...this.options
+        });
 
-            this.openSeaDragon = OpenSeadragon({
-                element: this.viewerDiv,
-                prefixUrl: 'https://cdnjs.cloudflare.com/ajax/libs/openseadragon/4.1.1/images/',
-                preserveViewport: this.preserveviewport === 'true',
-                minZoomLevel: parseFloat(this.minzoomlevel) || 0.5,
-                defaultZoomLevel: parseFloat(this.defaultzoomlevel) || 1,
-                maxZoomLevel: parseFloat(this.maxzoomlevel) || 10,
-                showNavigationControl: this.shownavigationcontrol === 'true',
-                tileSources: tileSources,
-                showNavigator:  this.shownavigator === 'true',
-                showZoomControl:  this.showzoomcontrol === 'true',
-                showHomeControl:  this.showhomecontrol === 'true',
-                showFullPageControl:  this.showfullpagecontrol === 'true',
-                showSequenceControl:  this.showsequencecontrol === 'true',
-                sequenceMode: this.sequencemode === 'true',
-                gestureSettingsMouse: {
-                  clickToZoom: this.clicktozoom === 'true',
-                },
-                // Required for OSD's WebGL drawer to be able to use cross-origin
-                // tile images as WebGL textures. Without this, tiles fetched from
-                // a different origin are "tainted" and cannot be uploaded to WebGL,
-                // causing blank pages on revisit (cached tiles trigger the failure
-                // before OSD's canvas-drawer fallback can schedule a redraw).
-                crossOriginPolicy: 'Anonymous',
-                // Performance and timeout settings
-                timeout: 120000, // Increase timeout to 120 seconds for slow servers
-                maxImageCacheCount: 200,
-                imageLoaderLimit: 2, // Limit concurrent tile requests to reduce server load
-                // Merge additional options from openseadragon-options attribute
-                ...this.options
-            });
-            console.log('OpenSeadragon viewer initialized successfully:', this.openSeaDragon);
-
-            // OpenSeadragon's built-in full-page mode reparents the viewer
-            // element to <body> and hides the other body children. That breaks
-            // inside a shadow DOM: the viewer is torn out of its host/styles and
-            // the surrounding layout collapses (only page chrome like a header /
-            // footer outside the hidden container survives). Redirect OSD's own
-            // full-page button — and our public toggle — to the standard
-            // Fullscreen API on the component host, which works in shadow DOM.
-            this.openSeaDragon.isFullPage = () => this.isFullScreen();
-            this.openSeaDragon.setFullScreen = (fullScreen) => {
-                this.setFullScreen(fullScreen);
-                return this.openSeaDragon;
-            };
-
-            // Re-dispatch OSD zoom changes as a DOM event so host apps can
-            // react without reaching into the underlying OpenSeadragon instance.
-            this.openSeaDragon.addHandler('zoom', (event) => {
-                this.dispatchEvent(new CustomEvent('zoom', {
-                    detail: { zoom: event.zoom },
-                    bubbles: true
-                }));
-            });
-
-            // Dispatch an 'image-ready' event once the first tile of the
-            // current tile source has been drawn.
-            this.openSeaDragon.addOnceHandler('tile-drawn', () => {
-                this.dispatchEvent(new CustomEvent('image-ready', { bubbles: true }));
-                // Render any overlays that were pushed before the viewer/tiles
-                // were ready (overlay placement needs a loaded TiledImage).
-                this._renderOverlays();
-            });
-
-            // --- Page change and zone handlers ---
-            // Fire page-changed on every OSD page navigation.
-            // If a zone was requested for this page, apply it once the new page
-            // is shown.
-            this.openSeaDragon.addHandler('page', (event) => {
-                this._firePageChanged(event.page + 1);
-
-                // Re-render the visible overlays for the new page once its tiles
-                // settle. Overlay positions depend on the current TiledImage, so
-                // defer until it is available; 'tile-drawn' also fires for cached
-                // pages, and the timeout is a fallback after OSD's home reset.
-                let rendered = false;
-                const renderOverlays = () => {
-                    if (rendered) return;
-                    rendered = true;
-                    this._renderOverlays();
-                };
-                this.openSeaDragon.addOnceHandler('tile-drawn', renderOverlays);
-                setTimeout(renderOverlays, 250);
-
-                if (!this._pendingZoneAfterPageChange) return;
-                const pending = this._pendingZoneAfterPageChange;
-                this._pendingZoneAfterPageChange = null;
-
-                // Apply the region after the new page settles. We can't rely on
-                // 'tile-loaded' alone: it does not fire when the target page's
-                // tiles are already cached (e.g. a page visited before), which
-                // would leave the viewport at the page's home position. Use a
-                // one-shot guard fed by both 'tile-drawn' (fires on cached
-                // redraws too) and a timeout fallback that also runs after
-                // OpenSeadragon's own page-change home reset.
-                let applied = false;
-                const applyPending = () => {
-                    if (applied) return;
-                    applied = true;
-                    this._applyZone(pending.zone);
-                    this._fireRegionChanged(
-                        pending.eventName || 'zone-changed',
-                        pending.zoneKey, pending.zone);
-                };
-                this.openSeaDragon.addOnceHandler('tile-drawn', applyPending);
-                setTimeout(applyPending, 250);
-            });
-
-            // If a zone was requested before the viewer was ready, apply it now.
-            // Wait for 'tile-loaded' so coordinate conversion is safe.
-            if (this._currentZoneKey && this._zonesData[this._currentZoneKey]) {
-                const zone = this._zonesData[this._currentZoneKey];
-                const zoneKey = this._currentZoneKey;
-                this.openSeaDragon.addOnceHandler('tile-loaded', () => {
-                    this._applyZone(zone);
-                    this._fireZoneChanged(zoneKey, zone);
-                });
+        // Apply initial page selection once the viewer is ready
+        this.openSeaDragon.addOnceHandler('open', () => {
+            const initialPage = parseInt(this.getAttribute('pagenumber') ?? this.pagenumber);
+            if (!isNaN(initialPage) && initialPage >= 1) {
+                this.goToPage(initialPage);
             }
-        } catch (error) {
-            console.error('Error initializing OpenSeadragon:', error);
+            this.updatePageInput();
+            this.applyRegionZoom();
+
+            // Reapply region zoom on page changes
+            this.openSeaDragon.addHandler('page', () => {
+                this.handlePageChange();
+                this.updatePageInput();
+            });
+
+            // Ensure region zoom applies when a new page is opened (crucial for sequence mode)
+            this.openSeaDragon.addHandler('open', () => {
+                this.handlePageChange();
+            });
+        });
+
+        // Ensure region zoom applies once tiles are available on first load
+        this.openSeaDragon.addOnceHandler('tile-loaded', () => {
+            this.updatePageInput();
+            this.applyRegionZoom();
+                this.enforceRestriction(true);
+            this.updateRevealOverlay();
+        });
+
+        this.openSeaDragon.addHandler('animation', this._enforceRestrictionHandler);
+        this.openSeaDragon.addHandler('resize', this._enforceRestrictionHandler);
+        this.openSeaDragon.addHandler('animation', this._updateRevealOverlayHandler);
+        this.openSeaDragon.addHandler('resize', this._updateRevealOverlayHandler);
+        this.openSeaDragon.addHandler('page', this._updateRevealOverlayHandler);
+        this.openSeaDragon.addHandler('open', this._updateRevealOverlayHandler);
+        this.openSeaDragon.addHandler('zoom', this._updateRevealOverlayHandler);
+        this.openSeaDragon.addHandler('pan', this._updateRevealOverlayHandler);
+    }
+
+    /**
+     * Updates the page number input field to reflect the current page.
+     */
+    updatePageInput() {
+        if (this.pageInput && this.openSeaDragon) {
+            this.pageInput.value = this.getCurrentPage().toString();
         }
+    }
+
+    /**
+     * Handles zoom and view reset on page changes.
+     * Checks if a jumpToZone is pending or if standard attributes should be applied.
+     */
+    handlePageChange() {
+        if (!this.openSeaDragon) return;
+
+        if (this._jumpToZoneData) {
+            if (this.getCurrentPage() === this._jumpToZoneData.pageNumber) {
+                // Only clear the data if the zoom was successfully applied
+                if (this.applyRegionZoom(this._jumpToZoneData)) {
+                    this._jumpToZoneData = null;
+                }
+            }
+        } else {
+            // Reset viewport to home position (not the enhanced home button behavior)
+            this.openSeaDragon.viewport.goHome(true);
+        }
+
+        this.enforceRestriction(true);
+        this.updateRevealOverlay();
+    }
+
+    /**
+     * Helper to get the current item being viewed.
+     * Handles sequence mode vs collection mode logic.
+     */
+    getCurrentItem() {
+        if (!this.openSeaDragon || !this.openSeaDragon.world) return null;
+        
+        // In sequence mode, the world usually holds just the current image at index 0
+        // We check if sequence mode is enabled (assuming it matches the attribute logic)
+        if (this.sequencemode !== 'false') {
+             return this.openSeaDragon.world.getItemAt(0);
+        }
+        
+        // In standard/collection mode, use the page index
+        const idx = this.openSeaDragon.currentPage ? this.openSeaDragon.currentPage() : 0;
+        return this.openSeaDragon.world.getItemAt(idx) || this.openSeaDragon.world.getItemAt(0);
+    }
+
+    /**
+     * Jumps to a specific zone on a specified page.
+     * @param {object} zoneData - Object containing pageNumber (1-based), ulx, uly, lrx, lry.
+     */
+    jumpToZone(zoneData) {
+        console.log("Jumping to zone:", zoneData);
+        if (!this.openSeaDragon) return;
+
+        const targetPage = parseInt(zoneData.pageNumber);
+        
+        this._jumpToZoneData = {
+            ...zoneData,
+            pageNumber: targetPage
+        };
+
+        if (this.getCurrentPage() !== targetPage) {
+            this.goToPage(targetPage);
+        } else {
+            this.applyRegionZoom(this._jumpToZoneData, false);
+            this._jumpToZoneData = null;
+        }
+    }
+
+    /**
+     * Applies a zoom to the rectangle defined by ulx, uly, lrx, lry (image pixel coordinates).
+     * Missing values default to the maximum extent of the corresponding axis.
+     * @param {object} [customZone=null] - Optional object with ulx, uly, lrx, lry properties. 
+     * @param {boolean} [immediately=true] - Whether to apply the zoom immediately (true) or animate (false).
+     * @returns {boolean} - True if zoom was applied, false otherwise.
+     */
+    applyRegionZoom(customZone = null, immediately = true) {
+        if(!this.openSeaDragon || !this.openSeaDragon.world || !this.openSeaDragon.world.getItemCount()) {
+            return false;
+        }
+
+        // Only act if at least one coordinate attribute is present or customZone is passed
+        const hasAnyCoord = customZone || this.hasAttribute('ulx') || this.hasAttribute('uly') || this.hasAttribute('lrx') || this.hasAttribute('lry');
+        if(!hasAnyCoord) {
+            return false;
+        }
+
+        const currentItem = this.getCurrentItem ? this.getCurrentItem() : 
+            (this.openSeaDragon.world.getItemAt(this.openSeaDragon.currentPage ? this.openSeaDragon.currentPage() : 0) || this.openSeaDragon.world.getItemAt(0));
+            
+        if(!currentItem) {
+            return false;
+        }
+
+        const contentSize = currentItem.getContentSize();
+        const imgWidth = contentSize.x;
+        const imgHeight = contentSize.y;
+
+        // If image not loaded yet, size might be 0? 
+        if (imgWidth === 0 || imgHeight === 0) return false;
+
+        let rawUlx, rawUly, rawLrx, rawLry;
+
+        if (customZone) {
+            rawUlx = customZone.ulx;
+            rawUly = customZone.uly;
+            rawLrx = customZone.lrx;
+            rawLry = customZone.lry;
+        } else {
+            rawUlx = this.getAttribute('ulx');
+            rawUly = this.getAttribute('uly');
+            rawLrx = this.getAttribute('lrx');
+            rawLry = this.getAttribute('lry');
+        }
+
+        let ulx = (rawUlx !== null && rawUlx !== undefined) ? parseFloat(rawUlx) : imgWidth;
+        let uly = (rawUly !== null && rawUly !== undefined) ? parseFloat(rawUly) : imgHeight;
+        let lrx = (rawLrx !== null && rawLrx !== undefined) ? parseFloat(rawLrx) : imgWidth;
+        let lry = (rawLry !== null && rawLry !== undefined) ? parseFloat(rawLry) : imgHeight;
+
+        // Invalid coordinates cannot define a reliable region, so show the full image.
+        if ([ulx, uly, lrx, lry].some((value) => Number.isNaN(value))) {
+            ulx = 0;
+            uly = 0;
+            lrx = imgWidth;
+            lry = imgHeight;
+        }
+
+        const cleanUlx = Math.min(Math.max(ulx, 0), imgWidth);
+        const cleanUly = Math.min(Math.max(uly, 0), imgHeight);
+        const cleanLrx = Math.min(Math.max(lrx, 0), imgWidth);
+        const cleanLry = Math.min(Math.max(lry, 0), imgHeight);
+
+        const minX = Math.min(cleanUlx, cleanLrx);
+        const maxX = Math.max(cleanUlx, cleanLrx);
+        const minY = Math.min(cleanUly, cleanLry);
+        const maxY = Math.max(cleanUly, cleanLry);
+
+        const width = Math.max(maxX - minX, 1); // enforce minimal size
+        const height = Math.max(maxY - minY, 1);
+
+        const rect = new OpenSeadragon.Rect(minX, minY, width, height);
+        const viewportRect = this.openSeaDragon.viewport.imageToViewportRectangle(rect);
+        this.openSeaDragon.viewport.fitBounds(viewportRect, immediately);
+        return true;
     }
     
     /**
@@ -705,18 +809,7 @@ class EdiromOpenseadragon extends HTMLElement {
      */
     setZoom(zoomLevel) {
         if(this.openSeaDragon && !isNaN(zoomLevel)) {
-            const viewport = this.openSeaDragon.viewport;
-            // Clamp to the configured min/max zoom ourselves. We apply the zoom
-            // immediately (3rd arg = true) because OSD's animated spring does not
-            // advance in this embedding (animation-frame never fires) — but
-            // immediate zoomTo also BYPASSES OSD's own min/max constraint spring,
-            // so a programmatic zoom (e.g. dragging the zoom bar) could otherwise
-            // shoot past maxZoomLevel / below minZoomLevel. Clamp here so the
-            // zoom bar can never exceed the configured limits.
-            const clampedZoom = Math.max(
-                viewport.getMinZoom(),
-                Math.min(zoomLevel, viewport.getMaxZoom()));
-            viewport.zoomTo(clampedZoom, null, true);
+            this.openSeaDragon.viewport.zoomTo(zoomLevel);
         }
     }
     
@@ -739,67 +832,116 @@ class EdiromOpenseadragon extends HTMLElement {
     
     goToPage(pageNumber) {
         if(this.openSeaDragon && !isNaN(pageNumber)) {
-            // pagenumber is 1-based, but OpenSeadragon's goToPage expects a 0-based index
-            const targetIndex = pageNumber - 1;
-            const totalPages = this.openSeaDragon.tileSources ?
-                this.openSeaDragon.tileSources.length : this.openSeaDragon.world.getItemCount();
-            if(targetIndex >= 0 && targetIndex < totalPages) {
-                this.openSeaDragon.goToPage(targetIndex);
-            }
+            // Convert 1-based page number to 0-based for OpenSeadragon
+            this.openSeaDragon.goToPage(pageNumber - 1);
         }
     }
     
     getCurrentPage() {
-        // OpenSeadragon's currentPage is 0-based; expose it as 1-based
-        return this.openSeaDragon ? this.openSeaDragon.currentPage() + 1 : 0;
+        // Convert 0-based OpenSeadragon page to 1-based
+        return this.openSeaDragon ? this.openSeaDragon.currentPage() + 1 : 1;
     }
     
     getTotalPages() {
         if (!this.openSeaDragon) return 0;
-        // In sequence mode OpenSeadragon keeps only the current image in `world`
-        // (getItemCount() === 1), so the authoritative total is the number of
-        // configured tile sources. Mirror the bound check used by goToPage().
-        return this.openSeaDragon.tileSources ?
-            this.openSeaDragon.tileSources.length : this.openSeaDragon.world.getItemCount();
+        // In sequence mode, use tileSources length; otherwise use world item count
+        if (this.sequencemode !== 'false' && this.openSeaDragon.tileSources) {
+            return this.openSeaDragon.tileSources.length;
+        }
+        return this.openSeaDragon.world.getItemCount();
     }
     
     // Home/reset view
     home() {
         if(this.openSeaDragon) {
-            this.openSeaDragon.viewport.goHome(true);
+            const configuredPage = this.getAttribute('pagenumber');
+            const hasZoneAttributes = this.hasAttribute('ulx') || this.hasAttribute('uly') ||
+                this.hasAttribute('lrx') || this.hasAttribute('lry');
+
+            // If pagenumber attribute is set, jump to that page (and zone if coordinates exist)
+            if (configuredPage) {
+                const targetPage = parseInt(configuredPage);
+                if (!isNaN(targetPage) && targetPage >= 1) {
+                    // If zone coordinates are set, use jumpToZone
+                    if (hasZoneAttributes) {
+                        this.jumpToZone({
+                            pageNumber: targetPage,
+                            ulx: this.getAttribute('ulx'),
+                            uly: this.getAttribute('uly'),
+                            lrx: this.getAttribute('lrx'),
+                            lry: this.getAttribute('lry')
+                        });
+                    } else {
+                        // No zone, just navigate and go home on that page
+                        if (this.getCurrentPage() !== targetPage) {
+                            this.goToPage(targetPage);
+                        } else {
+                            this.openSeaDragon.viewport.goHome(true);
+                        }
+                    }
+                    return;
+                }
+            }
+
+            // If only zone attributes are set (no pagenumber), apply zoom to current page
+            if (hasZoneAttributes) {
+                this.applyRegionZoom(null, true);
+                return;
+            }
+
+            // Default behavior: use OpenSeadragon's home
+            const restrictRect = this.getRestrictionZoneRect();
+            if (restrictRect) {
+                const allowedRect = this.computeAllowedViewportRect(restrictRect);
+                this.openSeaDragon.viewport.fitBounds(allowedRect, true);
+            } else {
+                this.openSeaDragon.viewport.goHome(true);
+            }
         }
     }
     
     // Full screen methods
-    //
-    // Use the standard Fullscreen API on the component host element rather than
-    // OpenSeadragon's built-in full-page mode. OSD's full-page reparents the
-    // viewer to <body> and hides sibling nodes, which blanks the page when the
-    // viewer lives inside a shadow DOM. Going fullscreen on the host keeps the
-    // whole component (viewer + overlays) intact and correctly styled.
-    setFullScreen(fullScreen) {
-        if (fullScreen) {
-            const request = this.requestFullscreen
-                || this.webkitRequestFullscreen
-                || this.msRequestFullscreen;
-            if (request) request.call(this);
-        } else if (this.isFullScreen()) {
-            const exit = document.exitFullscreen
-                || document.webkitExitFullscreen
-                || document.msExitFullscreen;
-            if (exit) exit.call(document);
+    async setFullScreen(fullScreen) {
+        try {
+            if (fullScreen) {
+                await this.enterComponentFullScreen();
+            } else {
+                await this.exitComponentFullScreen();
+            }
+        } catch (err) {
+            console.error('Fullscreen request failed:', err);
         }
     }
 
-    toggleFullScreen() {
-        this.setFullScreen(!this.isFullScreen());
+    async toggleFullScreen() {
+        await this.setFullScreen(!this.isFullScreen());
+    }
+    
+    isFullScreen() {
+        return document.fullscreenElement === this;
     }
 
-    isFullScreen() {
-        const fsElement = document.fullscreenElement
-            || document.webkitFullscreenElement
-            || document.msFullscreenElement;
-        return fsElement === this;
+    async enterComponentFullScreen() {
+        if (!this.isFullScreen()) {
+            await this.requestFullscreen({ navigationUI: 'hide' }).catch((err) => {
+                console.error('Failed to enter fullscreen:', err);
+            });
+        }
+    }
+
+    async exitComponentFullScreen() {
+        if (this.isFullScreen()) {
+            await document.exitFullscreen().catch((err) => {
+                console.error('Failed to exit fullscreen:', err);
+            });
+        }
+    }
+
+    updateFullScreenButtonState() {
+        const isFs = this.isFullScreen();
+        if (this.btnFullScreen) {
+            this.btnFullScreen.setAttribute('aria-pressed', String(isFs));
+        }
     }
     
     // Rotation methods
@@ -821,500 +963,167 @@ class EdiromOpenseadragon extends HTMLElement {
         return this.openSeaDragon ? this.openSeaDragon.viewport.getRotation() : 0;
     }
 
-    // ---------------------------------------------------------------
-    //  Viewport helpers (image-space)
-    // ---------------------------------------------------------------
-
-    /**
-     * Returns the currently visible region of the image in image-pixel
-     * coordinates, clamped to the image bounds.
-     * @returns {{x:number,y:number,width:number,height:number}}
-     */
-    getImageViewportRect() {
-        if (!this.openSeaDragon) {
-            return { x: 0, y: 0, width: 0, height: 0 };
+    parseOnlyRevealZones(rawValue) {
+        if (!rawValue) return [];
+        try {
+            const arr = JSON.parse(rawValue);
+            if (!Array.isArray(arr)) return [];
+            return arr
+                .map((entry) => {
+                    const pageNumber = parseInt(entry.pageNumber);
+                    const ulx = parseFloat(entry.ulx);
+                    const uly = parseFloat(entry.uly);
+                    const lrx = parseFloat(entry.lrx);
+                    const lry = parseFloat(entry.lry);
+                    if ([pageNumber, ulx, uly, lrx, lry].some((v) => Number.isNaN(v))) return null;
+                    return { pageNumber, ulx, uly, lrx, lry };
+                })
+                .filter(Boolean);
+        } catch (err) {
+            console.error('Invalid only-reveal-zones JSON:', err);
+            return [];
         }
-        const tiledImage = this.openSeaDragon.world.getItemAt(0);
-        if (!tiledImage) {
-            return { x: 0, y: 0, width: 0, height: 0 };
+    }
+
+    parseRestrictZoneConfig(rawValue) {
+        if(!rawValue) return null;
+        try {
+            const cfg = JSON.parse(rawValue);
+            if(!cfg || typeof cfg !== 'object') return null;
+            const pageNumber = parseInt(cfg.pageNumber);
+            const ulx = parseFloat(cfg.ulx);
+            const uly = parseFloat(cfg.uly);
+            const lrx = parseFloat(cfg.lrx);
+            const lry = parseFloat(cfg.lry);
+            if([pageNumber, ulx, uly, lrx, lry].some((v) => Number.isNaN(v))) return null;
+            return { pageNumber, ulx, uly, lrx, lry };
+        } catch (err) {
+            console.error('Invalid restrict-to-zone JSON:', err);
+            return null;
         }
-        const viewportBounds = this.openSeaDragon.viewport.getBounds();
-        const imageBounds = tiledImage.viewportToImageRectangle(viewportBounds);
-        const size = tiledImage.getContentSize();
-        const x = imageBounds.x < 0 ? 0 : imageBounds.x;
-        const y = imageBounds.y < 0 ? 0 : imageBounds.y;
-        const width = imageBounds.width > size.x ? size.x : imageBounds.width;
-        const height = imageBounds.height > size.y ? size.y : imageBounds.height;
-        return { x: x, y: y, width: width, height: height };
     }
 
-    /**
-     * Fits the viewport to the given image-pixel rectangle (with constraints).
-     * @param {number} x - Upper-left X in image pixels.
-     * @param {number} y - Upper-left Y in image pixels.
-     * @param {number} width - Width in image pixels.
-     * @param {number} height - Height in image pixels.
-     */
-    fitImageRect(x, y, width, height) {
-        if (!this.openSeaDragon) return;
-        const tiledImage = this.openSeaDragon.world.getItemAt(0);
-        if (!tiledImage) return;
-        const rect = tiledImage.imageToViewportRectangle(
-            Number(x), Number(y), Number(width), Number(height));
-        // immediately=true: the animated spring does not advance in this
-        // embedding, so an animated fit would never move the viewport.
-        this.openSeaDragon.viewport.fitBoundsWithConstraints(rect, true);
+    getRestrictionZoneRect() {
+        if(!this.openSeaDragon || !this._restrictZoneConfig) return null;
+        const currentPage = this.getCurrentPage();
+        if(currentPage !== this._restrictZoneConfig.pageNumber) return null;
+
+        const { ulx, uly, lrx, lry } = this._restrictZoneConfig;
+        const minX = Math.min(ulx, lrx);
+        const maxX = Math.max(ulx, lrx);
+        const minY = Math.min(uly, lry);
+        const maxY = Math.max(uly, lry);
+        const width = Math.max(maxX - minX, 1);
+        const height = Math.max(maxY - minY, 1);
+        return new OpenSeadragon.Rect(minX, minY, width, height);
     }
 
-    // ---------------------------------------------------------------
-    //  Overlay management (image-space)
-    // ---------------------------------------------------------------
-
-    /**
-     * Adds an HTML/SVG element overlay positioned by image-pixel coordinates.
-     * @param {Element} element - The overlay element.
-     * @param {number} x - Upper-left X in image pixels.
-     * @param {number} y - Upper-left Y in image pixels.
-     * @param {number} width - Width in image pixels.
-     * @param {number} height - Height in image pixels.
-     */
-    addImageOverlay(element, x, y, width, height) {
-        if (!this.openSeaDragon) return;
-        const tiledImage = this.openSeaDragon.world.getItemAt(0);
-        if (!tiledImage) return;
-        const rect = tiledImage.imageToViewportRectangle(
-            Number(x), Number(y), Number(width), Number(height));
-        this.openSeaDragon.addOverlay({ element: element, location: rect });
+    computeAllowedViewportRect(zoneRect) {
+        if(!this.openSeaDragon || !zoneRect) return null;
+        return this.openSeaDragon.viewport.imageToViewportRectangle(zoneRect);
     }
 
-    /**
-     * Removes an overlay by its element id (no-op if it does not exist).
-     * @param {string} overlayId
-     */
-    removeOverlay(overlayId) {
-        if (!this.openSeaDragon) return;
-        // OpenSeadragon's removeOverlay(string) resolves the element via
-        // document.getElementById, which CANNOT see elements inside this
-        // component's shadow DOM, so the overlay would never be removed
-        // (e.g. hiding annotations did nothing). Resolve the element from the
-        // shadow root ourselves and pass it directly; fall back to the id.
-        const element = this.shadowRoot.getElementById(overlayId);
-        this.openSeaDragon.removeOverlay(element || overlayId);
+    computeMinZoomForZone(zoneRect) {
+        if(!this.openSeaDragon) return null;
+        const viewport = this.openSeaDragon.viewport;
+        const currentZoom = viewport.getZoom();
+        const bounds = viewport.getBounds(true);
+        // Project how zoom affects bounds: width_new = bounds.width * currentZoom / targetZoom
+        const widthZoom = (bounds.width * currentZoom) / zoneRect.width;
+        const heightZoom = (bounds.height * currentZoom) / zoneRect.height;
+        const minZoom = Math.max(widthZoom, heightZoom);
+        return Number.isFinite(minZoom) ? minZoom : null;
     }
 
-    /**
-     * Returns an overlay by id, or null if not present / viewer not ready.
-     * @param {string} overlayId
-     * @returns {object|null}
-     */
-    getOverlayById(overlayId) {
-        return this.openSeaDragon ? this.openSeaDragon.getOverlayById(overlayId) : null;
+    clampBoundsToAllowedRect(bounds, allowedRect) {
+        if(!bounds || !allowedRect) return bounds;
+        const scale = Math.min(allowedRect.width / bounds.width, allowedRect.height / bounds.height, 1);
+        const width = bounds.width * scale;
+        const height = bounds.height * scale;
+        const maxX = allowedRect.x + allowedRect.width - width;
+        const maxY = allowedRect.y + allowedRect.height - height;
+        const x = Math.min(Math.max(bounds.x, allowedRect.x), maxX);
+        const y = Math.min(Math.max(bounds.y, allowedRect.y), maxY);
+        return new OpenSeadragon.Rect(x, y, width, height);
     }
 
-    // ---------------------------------------------------------------
-    //  Zone overlays (push model, rendered from zones-data by type)
-    // ---------------------------------------------------------------
+    enforceRestriction(immediately = true) {
+        if(this._isClamping || !this.openSeaDragon) return false;
+        const zoneRect = this.getRestrictionZoneRect();
+        if(!zoneRect) return false;
 
-    /**
-     * Removes all zone overlays currently rendered in the shadow DOM and
-     * resets the per-group container map.
-     * @private
-     */
-    _clearOverlays() {
-        const me = this;
-        Object.keys(this._overlayContainers).forEach(function (containerId) {
-            me.removeOverlay(containerId);
-        });
-        this._overlayContainers = {};
-        this._overlayBadges = [];
-        // hide any tooltip left over from the previous page's overlays
-        if (this._annotTipHideTimer) { clearTimeout(this._annotTipHideTimer); this._annotTipHideTimer = null; }
-        if (this._annotTipEl) this._annotTipEl.style.display = 'none';
-    }
+        const allowedRect = this.computeAllowedViewportRect(zoneRect);
+        if(!allowedRect) return false;
 
-    /**
-     * Lazily creates the single reusable annotation tooltip element and appends
-     * it to the viewer container. The tooltip stays open while the pointer is
-     * over it (so links inside it remain clickable) and hides on mouseleave.
-     * @private
-     */
-    _ensureAnnotationTooltip() {
-        const me = this;
-        if (this._annotTipEl) return this._annotTipEl;
-        const tip = document.createElement('div');
-        tip.className = 'edirom-annotation-tip annotationTip';
-        tip.style.position = 'absolute';
-        tip.style.zIndex = '1000';
-        tip.style.display = 'none';
-        tip.style.maxWidth = '300px';
-        tip.style.maxHeight = '300px';
-        tip.style.overflow = 'auto';
-        tip.addEventListener('mouseenter', function () {
-            if (me._annotTipHideTimer) { clearTimeout(me._annotTipHideTimer); me._annotTipHideTimer = null; }
-        });
-        tip.addEventListener('mouseleave', function () { me._hideAnnotationTooltip(); });
-        (this.viewerDiv || this.shadowRoot).appendChild(tip);
-        this._annotTipEl = tip;
-        return tip;
-    }
-
-    /**
-     * Shows the annotation tooltip for a badge, rendering the host-supplied
-     * HTML and positioning it next to the badge within the viewer container.
-     * @private
-     */
-    _showAnnotationTooltip(badge, html) {
-        if (!html) return;
-        if (this._annotTipHideTimer) { clearTimeout(this._annotTipHideTimer); this._annotTipHideTimer = null; }
-        const tip = this._ensureAnnotationTooltip();
-        tip.innerHTML = html;
-        tip.style.display = 'block';
-
-        const host = this.viewerDiv || this.shadowRoot;
-        const hostRect = host.getBoundingClientRect();
-        const badgeRect = badge.getBoundingClientRect();
-
-        // default: to the right of the badge; flip to the left if it overflows
-        let left = badgeRect.right - hostRect.left + 8;
-        if (left + tip.offsetWidth > host.clientWidth) {
-            left = badgeRect.left - hostRect.left - tip.offsetWidth - 8;
+        const minZoom = this.computeMinZoomForZone(zoneRect);
+        const viewport = this.openSeaDragon.viewport;
+        if(minZoom && viewport.getZoom() + 1e-8 < minZoom) {
+            this._isClamping = true;
+            viewport.zoomTo(minZoom, null, immediately);
+            this._isClamping = false;
         }
-        if (left < 0) left = 4;
 
-        let top = badgeRect.top - hostRect.top;
-        if (top + tip.offsetHeight > host.clientHeight) {
-            top = host.clientHeight - tip.offsetHeight - 4;
+        const bounds = viewport.getBounds(true);
+        const clamped = this.clampBoundsToAllowedRect(bounds, allowedRect);
+        const changed = Math.abs(bounds.x - clamped.x) > 1e-6 || Math.abs(bounds.y - clamped.y) > 1e-6 || Math.abs(bounds.width - clamped.width) > 1e-6 || Math.abs(bounds.height - clamped.height) > 1e-6;
+
+        if(changed) {
+            this._isClamping = true;
+            viewport.fitBounds(clamped, immediately);
+            this._isClamping = false;
         }
-        if (top < 0) top = 4;
 
-        tip.style.left = left + 'px';
-        tip.style.top = top + 'px';
+        return changed;
     }
 
-    /**
-     * Hides the annotation tooltip after a short grace period so the pointer
-     * can travel from the badge into the tooltip without it disappearing.
-     * @private
-     */
-    _hideAnnotationTooltip() {
-        const me = this;
-        if (this._annotTipHideTimer) clearTimeout(this._annotTipHideTimer);
-        this._annotTipHideTimer = setTimeout(function () {
-            if (me._annotTipEl) me._annotTipEl.style.display = 'none';
-            me._annotTipHideTimer = null;
-        }, 300);
+    buildMaskSvg(width, height, rects) {
+        const holeRects = rects
+            .map(({ x, y, width: w, height: h }) => `<rect x="${x}" y="${y}" width="${w}" height="${h}" fill="black"/>`)
+            .join('');
+        return `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}"><defs><mask id="reveal-mask" maskUnits="userSpaceOnUse" maskContentUnits="userSpaceOnUse"><rect width="100%" height="100%" fill="white"/>${holeRects}</mask></defs><rect width="100%" height="100%" fill="black" mask="url(#reveal-mask)"/></svg>`;
     }
 
-    /**
-     * Whether a zone should be HIDDEN by the current `hidden-filters` set: true
-     * when any of the zone's opaque filter tokens is in the hidden set. With no
-     * hidden set (null / empty) nothing is hidden. This single exclusion rule
-     * replaces the old per-axis category/priority matching and stays agnostic
-     * of what the tokens mean.
-     * @private
-     */
-    _zoneHiddenByFilter(tokens) {
-        const hidden = this._hiddenFilters;
-        if (!Array.isArray(hidden) || hidden.length === 0) return false;
-        for (let i = 0; i < tokens.length; i++) {
-            if (hidden.indexOf(tokens[i]) !== -1) return true;
-        }
-        return false;
-    }
-
-    /**
-     * Shows or hides rendered zone overlays according to the generic
-     * `hidden-filters` set. Only overlays flagged `filterable` (i.e. those that
-     * carry filter tokens, such as annotations) are affected; non-filterable
-     * overlays (e.g. measure labels) are always shown. A container is made
-     * visible only when it still has at least one visible child. Re-applied
-     * after every render so the filter persists across pages.
-     *
-     * NOTE: container visibility toggles `visibility`, not `display`, because
-     * OpenSeadragon re-applies `display:block` to every overlay on each redraw
-     * (which would override a `display:none` hide) but never touches
-     * `visibility`.
-     * @private
-     */
-    _applyOverlayVisibility() {
-        const me = this;
-        const containers = this._overlayContainers;
-        const containerHasVisible = {};
-
-        (this._overlayBadges || []).forEach(function (rec) {
-            const visible = !rec.filterable || !me._zoneHiddenByFilter(rec.filters);
-            rec.element.style.display = visible ? '' : 'none';
-            if (visible) containerHasVisible[rec.containerId] = true;
-        });
-
-        Object.keys(containers).forEach(function (containerId) {
-            containers[containerId].style.visibility =
-                containerHasVisible[containerId] ? '' : 'hidden';
-        });
-    }
-
-    /**
-     * Notifies the host that the active filter changed, so it can keep its
-     * filter menu checkboxes in sync. Fired whenever the `hidden-filters`
-     * attribute changes (including when set externally, e.g. via DevTools).
-     * The detail carries the current hidden-token array (null / [] = nothing
-     * hidden / show all).
-     * @private
-     */
-    _emitFilterChanged() {
-        this.dispatchEvent(new CustomEvent('filter-changed', {
-            detail: {
-                hiddenFilters: this._hiddenFilters
-            }
-        }));
-    }
-
-    /**
-     * Renders zone overlays from `this._zonesData` for the current page. Only
-     * zones whose `type` is in `this._visibleTypes`, that carry image-pixel
-     * coordinates and that belong to the current page are drawn. Zones sharing
-     * a `group` (e.g. several annotations on the same measure) share one
-     * container so their inner elements stack.
-     *
-     * The component is format-agnostic: the host supplies the CSS classes
-     * (`containerClass` / `innerClass`), optional `label` text, `tooltip` HTML
-     * and `fn` (host click action) per zone. Each inner element fires generic
-     * `zone-click` / `zone-mouseenter` / `zone-mouseleave` CustomEvents the
-     * host listens to; the component renders the hover tooltip itself.
-     * @private
-     */
-    _renderOverlays() {
-        const me = this;
-        this._clearOverlays();
-        if (!this.openSeaDragon) return;
-
-        const visibleTypes = Array.isArray(this._visibleTypes) ? this._visibleTypes : [];
-        if (visibleTypes.length === 0) return;
-
-        const currentPage = this.openSeaDragon.currentPage() + 1; // 1-based
-
-        Object.keys(this._zonesData).forEach(function (zoneKey) {
-            const zone = me._zonesData[zoneKey];
-            if (!zone || typeof zone !== 'object') return;
-
-            // Only render zones of a currently visible type.
-            if (visibleTypes.indexOf(zone.type) === -1) return;
-
-            // Skip zones without image-pixel coordinates (e.g. movement targets
-            // that only carry a page for navigation).
-            if (zone.ulx == null || zone.uly == null ||
-                zone.lrx == null || zone.lry == null) return;
-
-            // Only render zones that belong to the current page (when a page is
-            // given). Zones without a page are treated as page-agnostic.
-            if (zone.page != null && parseInt(zone.page) !== currentPage) return;
-
-            const x = Number(zone.ulx);
-            const y = Number(zone.uly);
-            const width = Number(zone.lrx) - Number(zone.ulx);
-            const height = Number(zone.lry) - Number(zone.uly);
-
-            // Zones sharing a group stack inside one container; ungrouped zones
-            // get their own container keyed by the zone key.
-            const containerId = zone.group || zoneKey;
-            let container = me._overlayContainers[containerId];
-            if (!container) {
-                container = document.createElement('div');
-                container.id = containerId;
-                container.className = zone.containerClass || ('edirom-zone edirom-zone-' + zone.type);
-                if (zone.dataId != null) container.dataset.ediromAnnotId = zone.dataId;
-                me._overlayContainers[containerId] = container;
-                me.addImageOverlay(container, x, y, width, height);
-            }
-
-            const inner = document.createElement('div');
-            inner.id = containerId + '_' + zoneKey;
-            inner.className = (zone.innerClass || 'edirom-zone-inner').replace(/\s+/g, ' ').trim();
-            if (zone.label != null && zone.label !== '') inner.textContent = zone.label;
-            if (zone.title) inner.title = zone.title;
-            if (zone.dataId != null) inner.setAttribute('data-edirom-annot-id', zone.dataId);
-            container.appendChild(inner);
-
-            // Track the inner element so the generic filter can toggle it.
-            // `filters` are the zone's opaque filter tokens; `filterable` is
-            // true only for zones carrying at least one token (e.g. annotations),
-            // so non-filterable zones (measure labels) always stay visible.
-            const filterTokens = String(zone.filters || '').split(/\s+/).filter(Boolean);
-            me._overlayBadges.push({
-                element: inner,
-                containerId: containerId,
-                filters: filterTokens,
-                filterable: filterTokens.length > 0
-            });
-
-            const detail = {
-                type: zone.type,
-                key: zoneKey,
-                id: zone.dataId,
-                fn: zone.fn || '',
-                title: zone.title || '',
-                element: inner
-            };
-            const tooltip = zone.tooltip || '';
-
-            // OpenSeadragon's MouseTracker captures pointer events on its
-            // container; stop them on the inner element so the native click
-            // fires and the host receives the event instead of OSD panning.
-            inner.addEventListener('pointerdown', function (ev) { ev.stopPropagation(); });
-            inner.addEventListener('mousedown', function (ev) { ev.stopPropagation(); });
-            inner.addEventListener('click', function (ev) {
-                ev.stopPropagation();
-                ev.preventDefault();
-                me.dispatchEvent(new CustomEvent('zone-click', { detail: detail }));
-            });
-            inner.addEventListener('mouseenter', function () {
-                if (tooltip) me._showAnnotationTooltip(inner, tooltip);
-                me.dispatchEvent(new CustomEvent('zone-mouseenter', { detail: detail }));
-            });
-            inner.addEventListener('mouseleave', function () {
-                if (tooltip) me._hideAnnotationTooltip();
-                me.dispatchEvent(new CustomEvent('zone-mouseleave', { detail: detail }));
-            });
-        });
-
-        // honour the current category/priority filter for the freshly built overlays
-        this._applyOverlayVisibility();
-    }
-
-    // ---------------------------------------------------------------
-    //  Zone / measure / movement navigation
-    // ---------------------------------------------------------------
-
-    /**
-     * Navigates the viewer to the zone identified by `zoneKey` in `_zonesData`.
-     * Handles same-page transitions (smooth) and cross-page transitions
-     * (page change + deferred zone application).
-     * @param {string} zoneKey - Key of the zone in the zones-data map.
-     */
-    _applyZoneByKey(zoneKey) {
-        const zone = this._zonesData[zoneKey];
-        if (!zone) {
-            console.warn(`edirom-image-viewer: zone "${zoneKey}" not found in zones-data.`);
-            return;
-        }
-        this._currentZoneKey = zoneKey;
-        this._navigateToRegion(zone, zoneKey, 'zone-changed');
-    }
-
-    /**
-     * Shared page-aware navigation used by zone jumps. Measures and movements
-     * are pushed as ordinary zone entries by the host, so this is the single
-     * page-aware region navigator.
-     * Handles same-page transitions (apply region directly) and cross-page
-     * transitions (change page, then apply the region once tiles are loaded).
-     * @param {Object} region - Region with a 1-based `page` and optional
-     *     `ulx, uly, lrx, lry` pixel coordinates.
-     * @param {string} key - The lookup key, echoed back in the change event.
-     * @param {string} eventName - CustomEvent name fired once navigation lands.
-     */
-    _navigateToRegion(region, key, eventName) {
-        if (!this.openSeaDragon) {
-            // Viewer not ready yet — initializeViewer re-applies the active zone.
+    updateRevealOverlay() {
+        if (!this.revealOverlay || !this.openSeaDragon) return;
+        const currentPage = this.getCurrentPage();
+        const zones = this._onlyRevealZones.filter((z) => z.pageNumber === currentPage);
+        const hasAnyZonesConfigured = this._onlyRevealZones.length > 0;
+        if (!zones.length && !hasAnyZonesConfigured) {
+            this.revealOverlay.style.display = 'none';
+            this.revealOverlay.innerHTML = '';
             return;
         }
 
-        const targetPage = parseInt(region.page) - 1; // 1-based → 0-based
-        const currentPage = this.openSeaDragon.currentPage();
-
-        if (isNaN(targetPage) || targetPage === currentPage) {
-            // Same page (or no page given): apply region directly
-            this._applyZone(region);
-            this._fireRegionChanged(eventName, key, region);
-        } else {
-            // Different page: defer region until the new page's tiles are loaded
-            this._pendingZoneAfterPageChange = { zoneKey: key, zone: region, eventName };
-            this.openSeaDragon.goToPage(targetPage);
-        }
-    }
-
-    /**
-     * Zooms/pans the viewport to the zone coordinates, or resets to home if
-     * no coordinates are present. Uses OSD's spring animation for smooth transitions.
-     * @param {Object} zone - The zone object with optional ulx, uly, lrx, lry.
-     */
-    _applyZone(zone) {
-        if (!this.openSeaDragon) return;
-
-        const hasZone = zone.ulx != null && zone.uly != null &&
-            zone.lrx != null && zone.lry != null;
-
-        if (!hasZone) {
-            this.openSeaDragon.viewport.goHome(true);
+        const viewport = this.openSeaDragon.viewport;
+        const viewerRect = this.openSeaDragon.container.getBoundingClientRect();
+        const width = Math.max(Math.floor(viewerRect.width), 1);
+        const height = Math.max(Math.floor(viewerRect.height), 1);
+        if (!width || !height) {
+            this.revealOverlay.style.display = 'none';
             return;
         }
 
-        // Convert pixel coordinates to viewport coordinates via the current TiledImage
-        const tiledImage = this.openSeaDragon.world.getItemAt(0);
-        if (!tiledImage) {
-            console.warn('edirom-image-viewer: no TiledImage available for zone conversion.');
-            this.openSeaDragon.viewport.goHome();
-            return;
-        }
+        const holes = [];
+        zones.forEach((zone) => {
+            const rect = new OpenSeadragon.Rect(
+                Math.min(zone.ulx, zone.lrx),
+                Math.min(zone.uly, zone.lry),
+                Math.max(Math.abs(zone.lrx - zone.ulx), 1),
+                Math.max(Math.abs(zone.lry - zone.uly), 1)
+            );
+            const viewportRect = viewport.imageToViewportRectangle(rect);
+            const viewerRectCoords = viewport.viewportToViewerElementRectangle(viewportRect);
+            holes.push({
+                x: viewerRectCoords.x,
+                y: viewerRectCoords.y,
+                width: Math.max(viewerRectCoords.width, 1),
+                height: Math.max(viewerRectCoords.height, 1)
+            });
+        });
 
-        const rect = tiledImage.imageToViewportRectangle(
-            Number(zone.ulx),
-            Number(zone.uly),
-            Number(zone.lrx) - Number(zone.ulx),
-            Number(zone.lry) - Number(zone.uly)
-        );
-        // immediately=true: OSD's spring animation does not advance in this
-        // embedding, so an animated fitBounds would never move the viewport.
-        this.openSeaDragon.viewport.fitBounds(rect, true);
-    }
-
-    /**
-     * Dispatches the `zone-changed` custom event.
-     * @param {string} zoneKey - The key of the zone that was navigated to.
-     * @param {Object} zone - The zone object that was navigated to.
-     */
-    _fireZoneChanged(zoneKey, zone) {
-        this.dispatchEvent(new CustomEvent('zone-changed', {
-            detail: { zoneKey, zone },
-            bubbles: true
-        }));
-    }
-
-    /**
-     * Dispatches a region-navigation custom event (currently `zone-changed`).
-     * @param {string} eventName - The event name to dispatch.
-     * @param {string} key - The lookup key that was navigated to.
-     * @param {Object} region - The region object that was navigated to.
-     */
-    _fireRegionChanged(eventName, key, region) {
-        this.dispatchEvent(new CustomEvent(eventName, {
-            detail: { key, zoneKey: key, region, zone: region },
-            bubbles: true
-        }));
-    }
-
-    /**
-     * Dispatches the `page-changed` custom event.
-     * @param {number} pageNumber - The 1-based page number that was navigated to.
-     */
-    _firePageChanged(pageNumber) {
-        this.dispatchEvent(new CustomEvent('page-changed', {
-            detail: { pageNumber },
-            bubbles: true
-        }));
-    }
-
-    /**
-     * Dispatches a `total-pages-changed` event whenever the set of tile sources
-     * changes, so host pagination (page spinner bounds, "page X of Y" labels)
-     * can resync to the new total.
-     * @param {number} totalPages - The new total number of pages (tile sources).
-     */
-    _fireTotalPagesChanged(totalPages) {
-        this.dispatchEvent(new CustomEvent('total-pages-changed', {
-            detail: { totalPages },
-            bubbles: true
-        }));
+        this.revealOverlay.style.display = 'block';
+        this.revealOverlay.innerHTML = this.buildMaskSvg(width, height, holes);
     }
 }
 
-customElements.define('edirom-image-viewer', EdiromOpenseadragon);
+customElements.define('edirom-image-viewer', EdiromImageViewer);
