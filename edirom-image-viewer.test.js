@@ -76,24 +76,25 @@ function withoutConsole(method, callback) {
     }
 }
 
-function createRegionViewer(width = 100, height = 200) {
+function createRegionViewer() {
     const viewer = createViewer();
     let fittedRect = null;
     let fittedImmediately = null;
+    let wentHomeImmediately = null;
 
     viewer.openSeaDragon = {
         world: {
-            getItemCount: () => 1,
             getItemAt: () => ({
-                getContentSize: () => ({ x: width, y: height })
+                imageToViewportRectangle: (x, y, width, height) => ({ x, y, width, height })
             })
         },
-        currentPage: () => 0,
         viewport: {
-            imageToViewportRectangle: (rect) => rect,
             fitBounds(rect, immediately) {
                 fittedRect = rect;
                 fittedImmediately = immediately;
+            },
+            goHome(immediately) {
+                wentHomeImmediately = immediately;
             }
         }
     };
@@ -101,105 +102,78 @@ function createRegionViewer(width = 100, height = 200) {
     return {
         viewer,
         fittedRect: () => fittedRect,
-        fittedImmediately: () => fittedImmediately
+        fittedImmediately: () => fittedImmediately,
+        wentHomeImmediately: () => wentHomeImmediately
     };
 }
 
-test('applyRegionZoom clamps coordinates to the image extent', () => {
+test('_applyZone converts image coordinates and fits immediately', () => {
     const fixture = createRegionViewer();
 
-    withoutConsole('log', () => fixture.viewer.applyRegionZoom({
-        ulx: -10,
-        uly: -20,
-        lrx: 150,
-        lry: 250
-    }));
+    fixture.viewer._applyZone({ ulx: 10, uly: 20, lrx: 30, lry: 50 });
 
-    assert.deepEqual({ ...fixture.fittedRect() }, {
-        x: 0,
-        y: 0,
-        width: 100,
-        height: 200
-    });
-});
-
-test('applyRegionZoom swaps reversed corners', () => {
-    const fixture = createRegionViewer();
-
-    withoutConsole('log', () => fixture.viewer.applyRegionZoom({
-        ulx: 90,
-        uly: 180,
-        lrx: 10,
-        lry: 20
-    }));
-
-    assert.deepEqual({ ...fixture.fittedRect() }, {
+    assert.deepEqual(fixture.fittedRect(), {
         x: 10,
         y: 20,
-        width: 80,
-        height: 160
+        width: 20,
+        height: 30
     });
+    assert.equal(fixture.fittedImmediately(), true);
 });
 
-test('applyRegionZoom enforces a minimum one-pixel region', () => {
+test('_applyZone goes home when coordinates are absent', () => {
     const fixture = createRegionViewer();
 
-    withoutConsole('log', () => fixture.viewer.applyRegionZoom({
-        ulx: 25,
-        uly: 50,
-        lrx: 25,
-        lry: 50
-    }));
+    fixture.viewer._applyZone({ page: 1 });
 
-    assert.deepEqual({ ...fixture.fittedRect() }, {
-        x: 25,
-        y: 50,
-        width: 1,
-        height: 1
-    });
+    assert.equal(fixture.wentHomeImmediately(), true);
+    assert.equal(fixture.fittedRect(), null);
 });
 
-test('applyRegionZoom falls back to the full extent for NaN coordinates', () => {
-    const fixture = createRegionViewer();
+test('_navigateToRegion changes to the target page and defers the zone', () => {
+    const viewer = createViewer();
+    let targetPage = null;
+    const zone = { page: 3, ulx: 1, uly: 2, lrx: 3, lry: 4 };
+    viewer.openSeaDragon = {
+        currentPage: () => 0,
+        goToPage(page) { targetPage = page; }
+    };
 
-    withoutConsole('log', () => fixture.viewer.applyRegionZoom({
-        ulx: 'invalid',
-        uly: 'invalid',
-        lrx: 'invalid',
-        lry: 'invalid'
-    }));
+    viewer._navigateToRegion(zone, 'measure:3', 'zone-changed');
 
-    assert.deepEqual({ ...fixture.fittedRect() }, {
-        x: 0,
-        y: 0,
-        width: 100,
-        height: 200
+    assert.equal(targetPage, 2);
+    assert.deepEqual(viewer._pendingZoneAfterPageChange, {
+        zoneKey: 'measure:3',
+        zone,
+        eventName: 'zone-changed'
     });
-});
-
-test('applyRegionZoom forwards the immediate flag to fitBounds', () => {
-    const fixture = createRegionViewer();
-
-    withoutConsole('log', () => fixture.viewer.applyRegionZoom({
-        ulx: 10,
-        uly: 20,
-        lrx: 30,
-        lry: 40
-    }, false));
-
-    assert.equal(fixture.fittedImmediately(), false);
 });
 
 test('goToPage converts a 1-based page number to a 0-based index', () => {
     const viewer = createViewer();
     let targetIndex = null;
     viewer.openSeaDragon = {
+        tileSources: ['one', 'two', 'three'],
         goToPage(index) { targetIndex = index; }
     };
 
     viewer.goToPage(3);
 
     assert.equal(targetIndex, 2);
+});
+
+test('goToPage ignores page numbers outside the available range', () => {
+    const viewer = createViewer();
+    let called = false;
+    viewer.openSeaDragon = {
+        tileSources: ['one', 'two'],
+        goToPage() { called = true; }
+    };
+
+    viewer.goToPage(0);
+    viewer.goToPage(3);
+
+    assert.equal(called, false);
 });
 
 test('getCurrentPage converts a 0-based index to a 1-based page number', () => {
@@ -209,9 +183,8 @@ test('getCurrentPage converts a 0-based index to a 1-based page number', () => {
     assert.equal(viewer.getCurrentPage(), 3);
 });
 
-test('getTotalPages uses tile sources in sequence mode', () => {
+test('getTotalPages uses configured tile sources when available', () => {
     const viewer = createViewer();
-    viewer.sequencemode = 'true';
     viewer.openSeaDragon = {
         tileSources: ['one', 'two', 'three'],
         world: { getItemCount: () => 1 }
@@ -220,62 +193,70 @@ test('getTotalPages uses tile sources in sequence mode', () => {
     assert.equal(viewer.getTotalPages(), 3);
 });
 
-test('getTotalPages uses world item count in collection mode', () => {
+test('getTotalPages falls back to the world item count', () => {
     const viewer = createViewer();
-    viewer.sequencemode = 'false';
     viewer.openSeaDragon = {
-        tileSources: ['one', 'two', 'three'],
         world: { getItemCount: () => 4 }
     };
 
     assert.equal(viewer.getTotalPages(), 4);
 });
 
-test('parseRestrictZoneConfig parses valid numeric values', () => {
+test('zones-data parses a valid zone map', () => {
     const viewer = createViewer();
+    const zones = {
+        'measure:1': { type: 'measure', page: 1, ulx: 10, uly: 20, lrx: 30, lry: 40 }
+    };
 
-    assert.deepEqual(viewer.parseRestrictZoneConfig(JSON.stringify({
-        pageNumber: '2',
-        ulx: '10.5',
-        uly: 20,
-        lrx: 30,
-        lry: 40
-    })), {
-        pageNumber: 2,
-        ulx: 10.5,
-        uly: 20,
-        lrx: 30,
-        lry: 40
-    });
+    viewer.handlePropertyChange('zones-data', JSON.stringify(zones));
+
+    assert.deepEqual(viewer._zonesData, zones);
 });
 
-test('parseRestrictZoneConfig returns null for empty and malformed input', () => {
+test('zones-data falls back to an empty map for malformed JSON', () => {
     const viewer = createViewer();
 
-    assert.equal(viewer.parseRestrictZoneConfig(''), null);
     withoutConsole('error', () => {
-        assert.equal(viewer.parseRestrictZoneConfig('{bad json'), null);
+        viewer.handlePropertyChange('zones-data', '{bad json');
     });
+
+    assert.deepEqual(viewer._zonesData, {});
 });
 
-test('parseOnlyRevealZones parses valid entries and removes invalid entries', () => {
+test('visible-types parses valid values and resets malformed values', () => {
     const viewer = createViewer();
 
-    assert.deepEqual(viewer.parseOnlyRevealZones(JSON.stringify([
-        { pageNumber: 1, ulx: 10, uly: 20, lrx: 30, lry: 40 },
-        { pageNumber: 2, ulx: 'bad', uly: 20, lrx: 30, lry: 40 }
-    ])), [
-        { pageNumber: 1, ulx: 10, uly: 20, lrx: 30, lry: 40 }
-    ]);
-});
+    viewer.handlePropertyChange('visible-types', '["annotation","measure"]');
+    assert.deepEqual(viewer._visibleTypes, ['annotation', 'measure']);
 
-test('parseOnlyRevealZones returns an empty array for empty and malformed input', () => {
-    const viewer = createViewer();
-
-    assert.deepEqual(viewer.parseOnlyRevealZones(''), []);
     withoutConsole('error', () => {
-        assert.deepEqual(viewer.parseOnlyRevealZones('{bad json'), []);
+        viewer.handlePropertyChange('visible-types', '{bad json');
     });
+    assert.deepEqual(viewer._visibleTypes, []);
+});
+
+test('_zoneHiddenByFilter matches any configured hidden token', () => {
+    const viewer = createViewer();
+    viewer._hiddenFilters = ['priority:low', 'category:editorial'];
+
+    assert.equal(viewer._zoneHiddenByFilter(['category:editorial']), true);
+    assert.equal(viewer._zoneHiddenByFilter(['category:music']), false);
+});
+
+test('setZoom clamps the requested level to viewport limits', () => {
+    const viewer = createViewer();
+    let appliedZoom = null;
+    viewer.openSeaDragon = {
+        viewport: {
+            getMinZoom: () => 0.5,
+            getMaxZoom: () => 4,
+            zoomTo(zoom) { appliedZoom = zoom; }
+        }
+    };
+
+    viewer.setZoom(10);
+
+    assert.equal(appliedZoom, 4);
 });
 
 test('constructor parses valid and empty openseadragon-options', () => {
@@ -286,11 +267,9 @@ test('constructor parses valid and empty openseadragon-options', () => {
     assert.deepEqual(createViewer().options, {});
 });
 
-test('constructor falls back to empty options for invalid JSON', () => {
-    withoutConsole('error', () => {
-        assert.deepEqual(
-            createViewer({ 'openseadragon-options': '{bad json' }).options,
-            {}
-        );
-    });
+test('constructor rejects malformed openseadragon-options JSON', () => {
+    assert.throws(
+        () => createViewer({ 'openseadragon-options': '{bad json' }),
+        SyntaxError
+    );
 });
