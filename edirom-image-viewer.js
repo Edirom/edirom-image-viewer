@@ -67,13 +67,8 @@ class EdiromImageViewer extends HTMLElement {
         this.totalTileSources = 0;
         
         /** @type {object} Additional OpenSeadragon options */
-        try {
-            this.options = this.getAttribute('openseadragon-options') ? 
-                JSON.parse(this.getAttribute('openseadragon-options')) : {};
-        } catch (e) {
-            console.error('Invalid openseadragon-options JSON:', e);
-            this.options = {};
-        }
+        this.options = this.parseOpenSeadragonOptions(
+            this.getAttribute('openseadragon-options'));
 
         /** @private */
         this._onFullScreenChange = () => this.updateFullScreenButtonState();
@@ -88,6 +83,24 @@ class EdiromImageViewer extends HTMLElement {
         this._onlyRevealZones = [];
         /** @private */
         this._updateRevealOverlayHandler = () => this.updateRevealOverlay();
+    }
+
+    /**
+     * Parses OpenSeadragon options without preventing component construction
+     * when the attribute contains malformed JSON.
+     * @param {string|null} value - JSON-encoded OpenSeadragon options.
+     * @returns {object} Parsed options, or an empty object when invalid.
+     */
+    parseOpenSeadragonOptions(value) {
+        if (!value) return {};
+        try {
+            const options = JSON.parse(value);
+            return options && typeof options === 'object' && !Array.isArray(options)
+                ? options : {};
+        } catch (error) {
+            console.error('Invalid openseadragon-options JSON:', error);
+            return {};
+        }
     }
 
     /**
@@ -304,24 +317,20 @@ class EdiromImageViewer extends HTMLElement {
                 break;
             
             case 'openseadragon-options':
-                try {
-                    this.options = JSON.parse(newPropertyValue);
-                    // If tileSources is in options, clear the tilesources attribute
-                    // so that options take priority
-                    if (this.options.tileSources) {
-                        this.tilesources = '';
-                    }
-                    // Destroy existing viewer to ensure complete replacement
-                    if(this.openSeaDragon) {
-                        this.openSeaDragon.destroy();
-                        this.openSeaDragon = null;
-                    }
-                    // If tileSources is in options, rebuild the viewer even if it doesn't exist yet
-                    if (this.options.tileSources || this.tilesources) {
-                        this.displayOpenSeadragon();
-                    }
-                } catch (e) {
-                    console.error('Invalid openseadragon-options JSON:', e);
+                this.options = this.parseOpenSeadragonOptions(newPropertyValue);
+                // If tileSources is in options, clear the tilesources attribute
+                // so that options take priority
+                if (this.options.tileSources) {
+                    this.tilesources = '';
+                }
+                // Destroy existing viewer to ensure complete replacement
+                if(this.openSeaDragon) {
+                    this.openSeaDragon.destroy();
+                    this.openSeaDragon = null;
+                }
+                // If tileSources is in options, rebuild the viewer even if it doesn't exist yet
+                if (this.options.tileSources || this.tilesources) {
+                    this.displayOpenSeadragon();
                 }
                 break;
 
