@@ -1,7 +1,3 @@
-
-console.log("Image Viewer loaded!");
-
-
 /**
  * Custom Web Component for viewing IIIF images using the OpenSeadragon viewer.
  * 
@@ -162,8 +158,28 @@ class EdiromOpenseadragon extends HTMLElement {
         this._pendingZoneAfterPageChange = null;
 
         /** @type {object} Additional OpenSeadragon options */
-        this.options = this.getAttribute('openseadragon-options') ? 
-            JSON.parse(this.getAttribute('openseadragon-options')) : {};
+
+
+        this.options = this.parseOpenSeadragonOptions(
+            this.getAttribute('openseadragon-options'));
+    }
+
+    /**
+     * Parses OpenSeadragon options without preventing component construction
+     * when the attribute contains malformed JSON.
+     * @param {string|null} value - JSON-encoded OpenSeadragon options.
+     * @returns {object} Parsed options, or an empty object when invalid.
+     */
+    parseOpenSeadragonOptions(value) {
+        if (!value) return {};
+        try {
+            const options = JSON.parse(value);
+            return options && typeof options === 'object' && !Array.isArray(options)
+                ? options : {};
+        } catch (error) {
+            console.error('Invalid openseadragon-options JSON:', error);
+            return {};
+        }
     }
 
     /**
@@ -354,7 +370,8 @@ class EdiromOpenseadragon extends HTMLElement {
                 break;
             
             case 'openseadragon-options':
-                this.options = JSON.parse(newPropertyValue);
+
+                this.options = this.parseOpenSeadragonOptions(newPropertyValue);
                 if(this.openSeaDragon) {
                     this.displayOpenSeadragon();
                 }
