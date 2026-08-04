@@ -392,9 +392,38 @@ Filtering hides individual badges via `display`, and a stacked container is hidd
 
 Whenever `visible-categories` or `visible-priorities` changes (including when set externally, e.g. via DevTools), the component dispatches an `annotation-filter-changed` CustomEvent with `detail = { visibleCategories, visiblePriorities }` (the current filter arrays, or `null` for "no filter"). The host can listen for it to keep its own filter UI (e.g. menu checkboxes) in sync with the component's state.
 
+## Testing
+
+### Unit tests
+
+The unit tests use Node.js's built-in `node:test` runner and do not require a browser or additional test dependencies. OpenSeadragon and the browser APIs used by the component are mocked so the tests remain deterministic and do not load remote images.
+
+The test files cover the following areas:
+
+- `edirom-image-viewer.test.js`: region zoom calculations, page numbering and navigation, total page calculation, zone parsing, reveal-zone parsing, and OpenSeadragon option parsing.
+- `edirom-image-viewer.contract.test.js`: the public component contract, including attribute update events, viewer destruction and rebuilding, trigger attributes, `clicktozoom`, toolbar actions, and fullscreen listener cleanup.
+
+Run the complete unit test suite from the repository root:
+
+```shell README.md
+node --test edirom-image-viewer.contract.test.js edirom-image-viewer.test.js
+```
+
+A successful run reports all tests as passing with no failures.
+
+To run only the component contract tests:
+
+```shell README.md
+node --test edirom-image-viewer.contract.test.js
+```
+
+### UI testing
+
+Use the hosted [Edirom Image Viewer demo](https://edirom.github.io/edirom-web-components/demos/edirom-image-viewer.html) for manual UI testing in a browser. The demo can be used to verify image loading, toolbar controls, navigation, zooming, fullscreen behavior, and visual interaction with OpenSeadragon.
+
 ## Browser Support
 
-The component uses modern web standards (Custom Elements, Shadow DOM) and requires a modern browser with ES6+ support
+The component uses modern web standards (Custom Elements, Shadow DOM) and requires a modern browser with ES6+ support.
 
 
 
