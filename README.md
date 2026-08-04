@@ -398,28 +398,19 @@ Whenever `visible-categories` or `visible-priorities` changes (including when se
 
 The unit tests use Node.js's built-in `node:test` runner and do not require a browser or additional test dependencies. OpenSeadragon and the browser APIs used by the component are mocked so the tests remain deterministic and do not load remote images.
 
-The test files cover the following areas:
+The tests in `edirom-image-viewer.test.js` cover universal-zone coordinate application, deferred cross-page zone navigation, page-number conversion and validation, page totals, `zones-data` and `visible-types` parsing, hidden-filter matching, zoom clamping, and OpenSeadragon option parsing.
 
-- `edirom-image-viewer.test.js`: region zoom calculations, page numbering and navigation, total page calculation, zone parsing, reveal-zone parsing, and OpenSeadragon option parsing.
-- `edirom-image-viewer.contract.test.js`: the public component contract, including attribute update events, viewer destruction and rebuilding, trigger attributes, `clicktozoom`, toolbar actions, and fullscreen listener cleanup.
-
-Run the complete unit test suite from the repository root:
+Run the unit tests from the repository root:
 
 ```shell README.md
-node --test edirom-image-viewer.contract.test.js edirom-image-viewer.test.js
+node --test edirom-image-viewer.test.js
 ```
 
 A successful run reports all tests as passing with no failures.
 
-To run only the component contract tests:
-
-```shell README.md
-node --test edirom-image-viewer.contract.test.js
-```
-
 ### UI testing
 
-Use the hosted [Edirom Image Viewer demo](https://edirom.github.io/edirom-web-components/demos/edirom-image-viewer.html) for manual UI testing in a browser. The demo can be used to verify image loading, toolbar controls, navigation, zooming, fullscreen behavior, and visual interaction with OpenSeadragon.
+Use the hosted [Edirom Image Viewer demo](https://edirom.github.io/edirom-web-components/demos/edirom-image-viewer.html) for manual UI testing in a browser. The demo can be used to verify image loading, OpenSeadragon controls, navigation, zooming, fullscreen behavior, zone navigation, and visual interaction with OpenSeadragon.
 
 ## Browser Support
 

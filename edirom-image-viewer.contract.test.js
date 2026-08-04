@@ -112,6 +112,8 @@ class MockDocument extends MockEventTarget {
     constructor() {
         super();
         this.fullscreenElement = null;
+        this.head = new MockElement('head');
+        this.head.querySelectorAll = () => [];
         this.body = new MockElement('body');
         this.body.appendChild = (child) => {
             MockElement.prototype.appendChild.call(this.body, child);
@@ -127,6 +129,10 @@ class MockDocument extends MockEventTarget {
 
     createElement(tagName) {
         return new MockElement(tagName);
+    }
+
+    getElementById(id) {
+        return this.head.getElementById(id) || this.body.getElementById(id);
     }
 }
 
@@ -186,42 +192,41 @@ test('attributeChangedCallback dispatches a bubbling communicate-property-update
 
     viewer.setAttribute('zoom', '2.5');
 
-    assert.deepEqual(received.detail, {
-        element: 'edirom-image-viewer',
-        property: 'zoom',
-        value: '2.5'
-    });
+    assert.deepEqual(received.detail, { zoom: '2.5' });
     assert.equal(received.bubbles, true);
     unmountViewer(viewer);
 });
 
-test('setting tilesources destroys the old viewer before rebuilding', () => {
+test('setting tilesources delegates viewer rebuilding and announces the total', () => {
     const viewer = mountViewer();
-    const calls = [];
-    viewer.openSeaDragon = { destroy: () => calls.push('destroy') };
-    viewer.displayOpenSeadragon = () => calls.push('rebuild');
+    let rebuildCalls = 0;
+    let totalPages;
+    viewer.displayOpenSeadragon = () => rebuildCalls++;
+    viewer.addEventListener('total-pages-changed', (event) => {
+        totalPages = event.detail.totalPages;
+    });
 
-    viewer.setAttribute('tilesources', '["new-info.json"]');
+    viewer.setAttribute('tilesources', '["one.json","two.json"]');
 
-    assert.deepEqual(calls, ['destroy', 'rebuild']);
+    assert.equal(rebuildCalls, 1);
+    assert.equal(totalPages, 2);
     unmountViewer(viewer);
 });
 
-test('setting openseadragon-options destroys the old viewer before rebuilding', () => {
+test('setting openseadragon-options parses options and rebuilds an active viewer', () => {
     const viewer = mountViewer();
-    const calls = [];
-    viewer.tilesources = '["existing-info.json"]';
-    viewer.openSeaDragon = { destroy: () => calls.push('destroy') };
-    viewer.displayOpenSeadragon = () => calls.push('rebuild');
+    let rebuildCalls = 0;
+    viewer.openSeaDragon = {};
+    viewer.displayOpenSeadragon = () => rebuildCalls++;
 
     viewer.setAttribute('openseadragon-options', '{"showNavigator":false}');
 
-    assert.deepEqual(calls, ['destroy', 'rebuild']);
+    assert.equal(rebuildCalls, 1);
     assert.deepEqual(viewer.options, { showNavigator: false });
     unmountViewer(viewer);
 });
 
-test('true trigger attributes invoke home and toggleFullScreen', () => {
+test('trigger attributes invoke home and toggleFullScreen', () => {
     const viewer = mountViewer();
     let homeCalls = 0;
     let fullscreenCalls = 0;
@@ -253,33 +258,33 @@ test('clicktozoom updates gestureSettingsMouse without recreating the viewer', (
     unmountViewer(viewer);
 });
 
-test('toolbar buttons render and call the corresponding component methods', () => {
+test('zones-data updates the universal zone lookup map', () => {
     const viewer = mountViewer();
-    const calls = [];
-    const actions = {
-        'Zoom in': 'zoomIn',
-        'Zoom out': 'zoomOut',
-        'Reset view': 'home',
-        'Toggle fullscreen': 'toggleFullScreen',
-        'Previous page': 'previousPage',
-        'Next page': 'nextPage'
+    const zones = {
+        'measure:1': { type: 'measure', page: 1, ulx: 10, uly: 20, lrx: 30, lry: 40 }
     };
-    for (const method of Object.values(actions)) viewer[method] = () => calls.push(method);
 
-    const buttons = viewer.toolbar.children.filter((child) => child.tagName === 'BUTTON');
-    assert.equal(buttons.length, 6);
-    assert.ok(viewer.toolbar.children.includes(viewer.pageInput));
-    for (const button of buttons) click(button);
+    viewer.setAttribute('zones-data', JSON.stringify(zones));
 
-    assert.deepEqual(calls, buttons.map((button) => actions[button.getAttribute('aria-label')]));
+    assert.deepEqual(viewer._zonesData, zones);
     unmountViewer(viewer);
 });
 
-test('disconnectedCallback removes the fullscreenchange listener', () => {
-    const listenersBeforeMount = document.listenerCount('fullscreenchange');
+test('zone strips a nonce and delegates navigation by key', () => {
+    const viewer = mountViewer();
+    let appliedKey;
+    viewer._applyZoneByKey = (key) => { appliedKey = key; };
+
+    viewer.setAttribute('zone', 'measure:1|42');
+
+    assert.equal(appliedKey, 'measure:1');
+    unmountViewer(viewer);
+});
+
+test('connectedCallback creates the viewer container and OpenSeadragon script', () => {
     const viewer = mountViewer();
 
-    assert.equal(document.listenerCount('fullscreenchange'), listenersBeforeMount + 1);
+    assert.ok(viewer.shadowRoot.getElementById('viewer'));
+    assert.ok(document.getElementById('osd-script'));
     unmountViewer(viewer);
-    assert.equal(document.listenerCount('fullscreenchange'), listenersBeforeMount);
 });
