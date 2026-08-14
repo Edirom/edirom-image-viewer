@@ -12,6 +12,8 @@
  * <edirom-image-viewer tilesources='["manifest.json"]'></edirom-image-viewer>
  * 
  * @attribute {string} tilesources - JSON string array of IIIF manifest URLs or tile source objects.
+ *   A tile source object of the shape {type:'digilib', url, width, height} is resolved into a real
+ *   OpenSeadragon custom tile source that requests region-scaled tiles from a digilib Scaler endpoint.
  * @attribute {number} pagenumber - The current page/image number to display (for multi-image sequences).
  * @attribute {number} zoom - The zoom level for the viewer.
  * @attribute {number} rotation - The rotation angle in degrees (0-360).
@@ -157,6 +159,27 @@ class EdiromOpenseadragon extends HTMLElement {
         /** @type {Object|null} Zone waiting to be applied after an OSD page change completes */
         this._pendingZoneAfterPageChange = null;
 
+        /**
+         * @type {Object<string,?string>} Named, freestanding SVG overlay
+         * layers for the CURRENT page, pushed via the `layers-data` attribute
+         * (host preloads/refetches this per page change). Keyed by an
+         * arbitrary layer id (e.g. 'layer-1', 'layer-2', ...); a null value
+         * means that layer has no markup on this page. Unlike zones-data,
+         * each entry is a whole ready-to-render SVG document (image-pixel
+         * viewBox), not a rectangular region.
+         */
+        this._layersData = {};
+
+        /**
+         * @type {Array<string>} Layer ids currently visible, pushed via the
+         * `visible-layers` attribute. Toggling only flips visibility on
+         * already-rendered containers - no re-render needed.
+         */
+        this._visibleLayers = [];
+
+        /** @type {Object<string,HTMLElement>} layerId-keyed rendered overlay containers */
+        this._layerContainers = {};
+
         /** @type {object} Additional OpenSeadragon options */
         this.options = this.getAttribute('openseadragon-options') ? 
             JSON.parse(this.getAttribute('openseadragon-options')) : {};
@@ -168,7 +191,7 @@ class EdiromOpenseadragon extends HTMLElement {
      * @returns {Array<string>} The list of observed attributes.
      */
     static get observedAttributes() {
-        return ['preserveviewport', 'clicktozoom', 'minzoomlevel', 'maxzoomlevel', 'shownavigationcontrol', 'sequencemode', 'shownavigator', 'showzoomcontrol', 'showhomecontrol', 'showfullpagecontrol', 'showsequencecontrol', 'tilesources', 'pagenumber', 'zoom', 'rotation', 'triggerhome', 'triggerfullscreen', 'openseadragon-options', 'zones-data', 'zone', 'visible-types', 'hidden-filters', 'fitrect', 'view-mode'];
+        return ['preserveviewport', 'clicktozoom', 'minzoomlevel', 'maxzoomlevel', 'shownavigationcontrol', 'sequencemode', 'shownavigator', 'showzoomcontrol', 'showhomecontrol', 'showfullpagecontrol', 'showsequencecontrol', 'tilesources', 'pagenumber', 'zoom', 'rotation', 'triggerhome', 'triggerfullscreen', 'openseadragon-options', 'zones-data', 'zone', 'visible-types', 'hidden-filters', 'fitrect', 'view-mode', 'layers-data', 'visible-layers'];
     }
 
     /**
@@ -278,8 +301,18 @@ class EdiromOpenseadragon extends HTMLElement {
         this.shadowRoot.appendChild(this.viewerDiv);
 
         // Load OSD script into document.head so it runs in the global scope
-        // (scripts appended to shadow root do not execute)
-        if (!document.getElementById('osd-script')) {
+        // (scripts appended to shadow root do not execute). index.html already
+        // loads OpenSeadragon locally at page load - only fetch the CDN copy as
+        // a fallback when that's missing. Skipping this check used to ALWAYS
+        // inject a second, redundant OpenSeadragon build; when that async CDN
+        // fetch resolved later it silently replaced window.OpenSeadragon
+        // mid-session and re-ran displayOpenSeadragon(), tearing down/rebuilding
+        // every already-initialized viewer against the new global (symptom:
+        // page navigation stops visually updating even though all the
+        // host-side page/attribute state keeps advancing correctly).
+        if (window.OpenSeadragon) {
+            this.set('tilesources', this.getAttribute('tilesources'));
+        } else if (!document.getElementById('osd-script')) {
             const osdScript = document.createElement('script');
             osdScript.id = 'osd-script';
             osdScript.src = "https://cdnjs.cloudflare.com/ajax/libs/openseadragon/4.1.1/openseadragon.min.js";
@@ -289,9 +322,6 @@ class EdiromOpenseadragon extends HTMLElement {
                 }
             };
             document.head.appendChild(osdScript);
-        } else if (window.OpenSeadragon) {
-            // Script already loaded
-            this.set('tilesources', this.getAttribute('tilesources'));
         } else {
             // Script tag exists but not yet loaded — wait for it
             document.getElementById('osd-script').addEventListener('load', () => {
@@ -439,6 +469,32 @@ class EdiromOpenseadragon extends HTMLElement {
                 this._emitFilterChanged();
                 break;
 
+            // Named SVG overlay layers for the current page (push model). The
+            // host refetches/pushes this whenever the page changes, keyed by
+            // an arbitrary layer id (e.g. 'layer-1', 'layer-2', ...). Rebuilds
+            // every layer container from scratch; visibility is applied after.
+            case 'layers-data':
+                try {
+                    this._layersData = JSON.parse(newPropertyValue) || {};
+                } catch (e) {
+                    console.error('Invalid layers-data JSON:', e);
+                    this._layersData = {};
+                }
+                this._renderLayers();
+                break;
+
+            // Which layer ids (from layers-data) are currently checked/visible.
+            // Pure visibility toggle - does not rebuild or refetch anything.
+            case 'visible-layers':
+                try {
+                    this._visibleLayers = JSON.parse(newPropertyValue) || [];
+                } catch (e) {
+                    console.error('Invalid visible-layers JSON:', e);
+                    this._visibleLayers = [];
+                }
+                this._applyLayerVisibility();
+                break;
+
             // Fit the viewport to an image-pixel rectangle. Value format:
             // "x,y,width,height" with an optional trailing nonce token that is
             // ignored — the nonce only exists so that repeating the SAME jump
@@ -548,6 +604,10 @@ class EdiromOpenseadragon extends HTMLElement {
             // Store the tile sources count
             this.totalTileSources = Array.isArray(tileSources) ? tileSources.length : 1;
 
+            const resolvedTileSources = Array.isArray(tileSources)
+                ? tileSources.map(ts => this._resolveTileSource(ts))
+                : this._resolveTileSource(tileSources);
+
             this.openSeaDragon = OpenSeadragon({
                 element: this.viewerDiv,
                 prefixUrl: 'https://cdnjs.cloudflare.com/ajax/libs/openseadragon/4.1.1/images/',
@@ -556,7 +616,7 @@ class EdiromOpenseadragon extends HTMLElement {
                 defaultZoomLevel: parseFloat(this.defaultzoomlevel) || 1,
                 maxZoomLevel: parseFloat(this.maxzoomlevel) || 10,
                 showNavigationControl: this.shownavigationcontrol === 'true',
-                tileSources: tileSources,
+                tileSources: resolvedTileSources,
                 showNavigator:  this.shownavigator === 'true',
                 showZoomControl:  this.showzoomcontrol === 'true',
                 showHomeControl:  this.showhomecontrol === 'true',
@@ -607,9 +667,10 @@ class EdiromOpenseadragon extends HTMLElement {
             // current tile source has been drawn.
             this.openSeaDragon.addOnceHandler('tile-drawn', () => {
                 this.dispatchEvent(new CustomEvent('image-ready', { bubbles: true }));
-                // Render any overlays that were pushed before the viewer/tiles
-                // were ready (overlay placement needs a loaded TiledImage).
+                // Render any overlays/layers that were pushed before the
+                // viewer/tiles were ready (placement needs a loaded TiledImage).
                 this._renderOverlays();
+                this._renderLayers();
             });
 
             // --- Page change and zone handlers ---
@@ -628,6 +689,7 @@ class EdiromOpenseadragon extends HTMLElement {
                     if (rendered) return;
                     rendered = true;
                     this._renderOverlays();
+                    this._renderLayers();
                 };
                 this.openSeaDragon.addOnceHandler('tile-drawn', renderOverlays);
                 setTimeout(renderOverlays, 250);
@@ -670,7 +732,55 @@ class EdiromOpenseadragon extends HTMLElement {
             console.error('Error initializing OpenSeadragon:', error);
         }
     }
-    
+
+    /**
+     * Turns a plain {type:'digilib', url, width, height} descriptor into a real
+     * OpenSeadragon custom tile source: each tile is requested from the digilib
+     * Scaler API as a region+scale crop (wx/wy/ww/wh = source region as
+     * FRACTIONS 0..1 of the full image - digilib's own convention, see the
+     * legacy ImageViewer.calculateHiResImg; dw/dh = absolute pixel destination
+     * size), giving true deep-zoom tiling against a server that has no
+     * IIIF/DZI endpoint of its own. Any other tile source shape (IIIF
+     * descriptor objects, manifest URLs, plain strings) passes through
+     * unchanged.
+     */
+    _resolveTileSource(tileSource) {
+        if (!tileSource || tileSource.type !== 'digilib') return tileSource;
+
+        const width = Number(tileSource.width);
+        const height = Number(tileSource.height);
+        const baseUrl = tileSource.url;
+        const tileSize = tileSource.tileSize || 512;
+        const sep = baseUrl.includes('?') ? '&' : '?';
+
+        return {
+            width,
+            height,
+            tileSize,
+            tileOverlap: 0,
+            getTileUrl: function(level, x, y) {
+                // `this` is the OpenSeadragon TileSource instance created from
+                // this descriptor, so maxLevel/width/height are its own; OSD
+                // does NOT keep a plain `tileSize` property on the instance
+                // (only internal _tileWidth/_tileHeight), so `tileSize` is
+                // read from this closure instead of `this.tileSize`.
+                const scale = Math.pow(2, this.maxLevel - level);
+                const wxPx = x * tileSize * scale;
+                const wyPx = y * tileSize * scale;
+                const wwPx = Math.min(tileSize * scale, this.width - wxPx);
+                const whPx = Math.min(tileSize * scale, this.height - wyPx);
+                const dw = Math.ceil(wwPx / scale);
+                const dh = Math.ceil(whPx / scale);
+                const wx = wxPx / this.width;
+                const wy = wyPx / this.height;
+                const ww = wwPx / this.width;
+                const wh = whPx / this.height;
+                return baseUrl + sep + 'wx=' + wx + '&wy=' + wy + '&ww=' + ww +
+                    '&wh=' + wh + '&dw=' + dw + '&dh=' + dh + '&mo=fit';
+            }
+        };
+    }
+
     /**
      * Public API Methods
      */
@@ -905,6 +1015,70 @@ class EdiromOpenseadragon extends HTMLElement {
      */
     getOverlayById(overlayId) {
         return this.openSeaDragon ? this.openSeaDragon.getOverlayById(overlayId) : null;
+    }
+
+    // ---------------------------------------------------------------
+    //  Named SVG layers (push model, rendered from layers-data)
+    // ---------------------------------------------------------------
+
+    /**
+     * Removes all currently rendered layer containers and resets the map.
+     * @private
+     */
+    _clearLayers() {
+        const me = this;
+        Object.keys(this._layerContainers).forEach(function (layerId) {
+            me.removeOverlay(me._layerContainers[layerId].id);
+        });
+        this._layerContainers = {};
+    }
+
+    /**
+     * Rebuilds every layer container from `_layersData` (current page). A
+     * no-op until the OSD viewer/tiles are ready - re-invoked from the
+     * 'tile-drawn'/'page' handlers so a layers-data push that arrives before
+     * readiness is not silently dropped.
+     * @private
+     */
+    _renderLayers() {
+        const me = this;
+        this._clearLayers();
+        if (!this.openSeaDragon) return;
+
+        Object.keys(this._layersData).forEach(function (layerId) {
+            const svgString = me._layersData[layerId];
+            if (!svgString) return;
+
+            const parser = new DOMParser();
+            const svg = parser.parseFromString(svgString, 'text/xml').documentElement;
+            svg.id = me.id + '_' + layerId;
+            const width = svg.width.baseVal.value;
+            const height = svg.height.baseVal.value;
+            // See addSVGOverlay history: the raw SVG's native pixel width/height
+            // would render at that literal CSS pixel size regardless of the
+            // container; fill the container instead, viewBox keeps the paths'
+            // absolute image-pixel coordinate mapping intact.
+            svg.setAttribute('width', '100%');
+            svg.setAttribute('height', '100%');
+
+            me._layerContainers[layerId] = svg;
+            me.addImageOverlay(svg, 0, 0, width, height);
+        });
+
+        this._applyLayerVisibility();
+    }
+
+    /**
+     * Toggles visibility of already-rendered layer containers to match
+     * `_visibleLayers`. Pure visibility flip - no rebuild, no refetch.
+     * @private
+     */
+    _applyLayerVisibility() {
+        const me = this;
+        Object.keys(this._layerContainers).forEach(function (layerId) {
+            me._layerContainers[layerId].style.visibility =
+                me._visibleLayers.indexOf(layerId) !== -1 ? '' : 'hidden';
+        });
     }
 
     // ---------------------------------------------------------------
@@ -1248,7 +1422,9 @@ class EdiromOpenseadragon extends HTMLElement {
         const tiledImage = this.openSeaDragon.world.getItemAt(0);
         if (!tiledImage) {
             console.warn('edirom-image-viewer: no TiledImage available for zone conversion.');
-            this.openSeaDragon.viewport.goHome();
+            // immediately=true: see the fitBounds call below - animation doesn't
+            // advance in this embedding, so a non-immediate goHome would never settle.
+            this.openSeaDragon.viewport.goHome(true);
             return;
         }
 
