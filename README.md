@@ -392,9 +392,40 @@ Filtering hides individual badges via `display`, and a stacked container is hidd
 
 Whenever `visible-categories` or `visible-priorities` changes (including when set externally, e.g. via DevTools), the component dispatches an `annotation-filter-changed` CustomEvent with `detail = { visibleCategories, visiblePriorities }` (the current filter arrays, or `null` for "no filter"). The host can listen for it to keep its own filter UI (e.g. menu checkboxes) in sync with the component's state.
 
+## Unit Tests
+
+Unit tests for the component are located in `edirom-image-viewer.test.js`. They use Node.js's built-in `node:test` runner and `node:assert` assertions, so no additional test framework or dependency installation is required. Lightweight browser and OpenSeadragon mocks let the tests run without opening a browser or loading images over the network.
+
+The test suite is aligned with the component's current universal-zone API and covers:
+
+- Applying image-coordinate zones and returning to the full-image view when a zone has no coordinates
+- Deferring cross-page zone navigation until the target page is available
+- Conversion and validation of 1-based component page numbers against OpenSeadragon's 0-based indexes
+- Page totals from configured tile sources, with a fallback to the OpenSeadragon world item count
+- Parsing valid and malformed `zones-data` and `visible-types` JSON
+- Matching zone filter tokens through `hidden-filters`
+- Clamping programmatic zoom requests to the viewport's minimum and maximum zoom levels
+- Parsing valid and empty `openseadragon-options`, including the current malformed-JSON behavior
+
+### Running the Tests
+
+Install [Node.js](https://nodejs.org/) 18 or newer. From the repository root, run:
+
+```shell
+node --test edirom-image-viewer.test.js
+```
+
+The runner prints each test result and a summary. A successful run exits with status code `0`; failures produce a non-zero exit code with error details.
+
+To run tests whose names match a specific pattern:
+
+```shell
+node --test --test-name-pattern="goToPage" edirom-image-viewer.test.js
+```
+
 ## Browser Support
 
-The component uses modern web standards (Custom Elements, Shadow DOM) and requires a modern browser with ES6+ support
+The component uses modern web standards (Custom Elements, Shadow DOM) and requires a modern browser with ES6+ support.
 
 
 
