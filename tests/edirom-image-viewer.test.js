@@ -50,6 +50,7 @@ OpenSeadragon.Rect = class Rect {
 global.HTMLElement = MockHTMLElement;
 global.OpenSeadragon = OpenSeadragon;
 global.window = { OpenSeadragon };
+global.document = { currentScript: null };
 global.tileSources = [];
 global.customElements = {
     define(name, constructor) {
@@ -107,7 +108,7 @@ function createRegionViewer() {
     };
 }
 
-test('_applyZone converts image coordinates and fits immediately', () => {
+test('_applyZone converts image coordinates and fits with animation', () => {
     const fixture = createRegionViewer();
 
     fixture.viewer._applyZone({ ulx: 10, uly: 20, lrx: 30, lry: 50 });
@@ -118,15 +119,15 @@ test('_applyZone converts image coordinates and fits immediately', () => {
         width: 20,
         height: 30
     });
-    assert.equal(fixture.fittedImmediately(), true);
+    assert.equal(fixture.fittedImmediately(), undefined);
 });
 
-test('_applyZone goes home when coordinates are absent', () => {
+test('_applyZone goes home with animation when coordinates are absent', () => {
     const fixture = createRegionViewer();
 
     fixture.viewer._applyZone({ page: 1 });
 
-    assert.equal(fixture.wentHomeImmediately(), true);
+    assert.equal(fixture.wentHomeImmediately(), undefined);
     assert.equal(fixture.fittedRect(), null);
 });
 
