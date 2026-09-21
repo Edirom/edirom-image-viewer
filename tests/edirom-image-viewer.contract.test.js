@@ -157,7 +157,7 @@ global.customElements = {
     }
 };
 
-require('./edirom-image-viewer.js');
+require('../edirom-image-viewer.js');
 
 function withoutConsole(method, callback) {
     const original = console[method];
