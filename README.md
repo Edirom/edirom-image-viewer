@@ -411,6 +411,36 @@ A successful run reports all tests as passing with no failures.
 ### UI testing
 
 Use the hosted [Edirom Image Viewer demo](https://edirom.github.io/edirom-web-components/demos/edirom-image-viewer.html) for manual UI testing in a browser. The demo can be used to verify image loading, OpenSeadragon controls, navigation, zooming, fullscreen behavior, zone navigation, and visual interaction with OpenSeadragon.
+## Unit Tests
+
+Unit tests for the component are located in `tests/edirom-image-viewer.test.js`. They use Node.js's built-in `node:test` runner and `node:assert` assertions, so no additional test framework or dependency installation is required. Lightweight browser and OpenSeadragon mocks let the tests run without opening a browser or loading images over the network.
+
+The test suite is aligned with the component's current universal-zone API and covers:
+
+- Applying image-coordinate zones and returning to the full-image view when a zone has no coordinates
+- Deferring cross-page zone navigation until the target page is available
+- Conversion and validation of 1-based component page numbers against OpenSeadragon's 0-based indexes
+- Page totals from configured tile sources, with a fallback to the OpenSeadragon world item count
+- Parsing valid and malformed `zones-data` and `visible-types` JSON
+- Matching zone filter tokens through `hidden-filters`
+- Clamping programmatic zoom requests to the viewport's minimum and maximum zoom levels
+- Parsing valid and empty `openseadragon-options`, including the current malformed-JSON behavior
+
+### Running the Tests
+
+Install [Node.js](https://nodejs.org/) 18 or newer. From the repository root, run:
+
+```shell
+node --test tests/edirom-image-viewer.test.js
+```
+
+The runner prints each test result and a summary. A successful run exits with status code `0`; failures produce a non-zero exit code with error details.
+
+To run tests whose names match a specific pattern:
+
+```shell
+node --test --test-name-pattern="goToPage" tests/edirom-image-viewer.test.js
+```
 
 ## Browser Support
 
