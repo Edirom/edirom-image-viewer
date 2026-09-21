@@ -281,10 +281,10 @@ test('zone strips a nonce and delegates navigation by key', () => {
     unmountViewer(viewer);
 });
 
-test('connectedCallback creates the viewer container and OpenSeadragon script', () => {
+test('connectedCallback creates the viewer container and reuses host OpenSeadragon', () => {
     const viewer = mountViewer();
 
     assert.ok(viewer.shadowRoot.getElementById('viewer'));
-    assert.ok(document.getElementById('osd-script'));
+    assert.equal(document.getElementById('osd-script'), null);
     unmountViewer(viewer);
 });

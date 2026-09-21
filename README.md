@@ -398,7 +398,7 @@ Whenever `visible-categories` or `visible-priorities` changes (including when se
 
 The component contract tests use Node.js's built-in `node:test` runner and do not require a browser or additional test dependencies. Browser APIs and OpenSeadragon are mocked so the tests remain deterministic and do not load remote images.
 
-The tests in `edirom-image-viewer.contract.test.js` cover bubbling attribute-update events, tile-source rebuild and page-total notifications, OpenSeadragon option updates, trigger attributes, live `clicktozoom` updates, universal `zones-data` updates, nonce-aware `zone` navigation, and connected-callback creation of the viewer container and OpenSeadragon script.
+The tests in `edirom-image-viewer.contract.test.js` cover bubbling attribute-update events, tile-source rebuild and page-total notifications, OpenSeadragon option updates, trigger attributes, live `clicktozoom` updates, universal `zones-data` updates, nonce-aware `zone` navigation, and connected-callback creation of the viewer container while reusing a host-provided OpenSeadragon instance.
 
 Run the component contract tests from the repository root:
 
