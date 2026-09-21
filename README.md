@@ -392,6 +392,25 @@ Filtering hides individual badges via `display`, and a stacked container is hidd
 
 Whenever `visible-categories` or `visible-priorities` changes (including when set externally, e.g. via DevTools), the component dispatches an `annotation-filter-changed` CustomEvent with `detail = { visibleCategories, visiblePriorities }` (the current filter arrays, or `null` for "no filter"). The host can listen for it to keep its own filter UI (e.g. menu checkboxes) in sync with the component's state.
 
+## Testing
+
+### Component contract tests
+
+The component contract tests use Node.js's built-in `node:test` runner and do not require a browser or additional test dependencies. Browser APIs and OpenSeadragon are mocked so the tests remain deterministic and do not load remote images.
+
+The tests in `tests/edirom-image-viewer.contract.test.js` cover bubbling attribute-update events, tile-source rebuild and page-total notifications, OpenSeadragon option updates, trigger attributes, live `clicktozoom` updates, universal `zones-data` updates, nonce-aware `zone` navigation, and connected-callback creation of the viewer container while reusing a host-provided OpenSeadragon instance.
+
+Run the component contract tests from the repository root:
+
+```shell README.md
+node --test tests/edirom-image-viewer.contract.test.js
+```
+
+A successful run reports all tests as passing with no failures.
+
+### UI testing
+
+Use the hosted [Edirom Image Viewer demo](https://edirom.github.io/edirom-web-components/demos/edirom-image-viewer.html) for manual UI testing in a browser. The demo can be used to verify image loading, OpenSeadragon controls, navigation, zooming, fullscreen behavior, zone navigation, and visual interaction with OpenSeadragon.
 ## Unit Tests
 
 Unit tests for the component are located in `tests/edirom-image-viewer.test.js`. They use Node.js's built-in `node:test` runner and `node:assert` assertions, so no additional test framework or dependency installation is required. Lightweight browser and OpenSeadragon mocks let the tests run without opening a browser or loading images over the network.
