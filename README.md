@@ -394,7 +394,7 @@ Whenever `visible-categories` or `visible-priorities` changes (including when se
 
 ## Unit Tests
 
-Unit tests for the component are located in `edirom-image-viewer.test.js`. They use Node.js's built-in `node:test` runner and `node:assert` assertions, so no additional test framework or dependency installation is required. Lightweight browser and OpenSeadragon mocks let the tests run without opening a browser or loading images over the network.
+Unit tests for the component are located in `tests/edirom-image-viewer.test.js`. They use Node.js's built-in `node:test` runner and `node:assert` assertions, so no additional test framework or dependency installation is required. Lightweight browser and OpenSeadragon mocks let the tests run without opening a browser or loading images over the network.
 
 The test suite is aligned with the component's current universal-zone API and covers:
 
@@ -412,7 +412,7 @@ The test suite is aligned with the component's current universal-zone API and co
 Install [Node.js](https://nodejs.org/) 18 or newer. From the repository root, run:
 
 ```shell
-node --test edirom-image-viewer.test.js
+node --test tests/edirom-image-viewer.test.js
 ```
 
 The runner prints each test result and a summary. A successful run exits with status code `0`; failures produce a non-zero exit code with error details.
@@ -420,7 +420,7 @@ The runner prints each test result and a summary. A successful run exits with st
 To run tests whose names match a specific pattern:
 
 ```shell
-node --test --test-name-pattern="goToPage" edirom-image-viewer.test.js
+node --test --test-name-pattern="goToPage" tests/edirom-image-viewer.test.js
 ```
 
 ## Browser Support

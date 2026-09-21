@@ -57,7 +57,7 @@ global.customElements = {
     }
 };
 
-require('./edirom-image-viewer.js');
+require('../edirom-image-viewer.js');
 
 function createViewer(attributes = {}) {
     initialAttributes = attributes;
