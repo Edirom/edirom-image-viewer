@@ -625,7 +625,9 @@ class EdiromOpenseadragon extends HTMLElement {
                 prefixUrl: new URL('vendor/openseadragon/images/', _COMPONENT_BASE).href,
                 preserveViewport: this.preserveviewport === 'true',
                 minZoomLevel: parseFloat(this.minzoomlevel) || 0.5,
-                defaultZoomLevel: parseFloat(this.defaultzoomlevel) || 1,
+                // 0 = "home" fits the whole image within the viewport, centred.
+                defaultZoomLevel: parseFloat(this.defaultzoomlevel) || 0,
+                homeFillsViewer: false,
                 maxZoomLevel: parseFloat(this.maxzoomlevel) || 10,
                 showNavigationControl: this.shownavigationcontrol === 'true',
                 tileSources: resolvedTileSources,
