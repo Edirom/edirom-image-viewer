@@ -551,6 +551,16 @@ class EdiromOpenseadragon extends HTMLElement {
     displayOpenSeadragon() {
         if (window.OpenSeadragon) {
 
+            // The viewer container is created in connectedCallback. When a
+            // viewer element is created after OpenSeadragon has already loaded
+            // (e.g. the per-voice viewers of the measure-based view), the
+            // initial `tilesources` attribute fires attributeChangedCallback —
+            // and thus this method — BEFORE connectedCallback has run, so
+            // this.viewerDiv is still null and `new OpenSeadragon.Viewer`
+            // crashes on element.appendChild. Bail out here; connectedCallback
+            // re-sets `tilesources` once the container exists.
+            if (!this.viewerDiv) return;
+
             if(this.openSeaDragon) {
                 this.openSeaDragon.destroy();
             }
@@ -962,12 +972,23 @@ class EdiromOpenseadragon extends HTMLElement {
     fitImageRect(x, y, width, height) {
         if (!this.openSeaDragon) return;
         const tiledImage = this.openSeaDragon.world.getItemAt(0);
-        if (!tiledImage) return;
+        if (!tiledImage) {
+            // Tiles not loaded yet (e.g. a freshly created measure-based
+            // viewer): remember the rect and apply it once the image opens, so
+            // the zone is zoomed to instead of staying on the whole-image
+            // (home) view.
+            this._pendingFitRect = { x: x, y: y, width: width, height: height };
+            this.openSeaDragon.addOnceHandler('open', () => {
+                const r = this._pendingFitRect;
+                if (r) { this._pendingFitRect = null; this.fitImageRect(r.x, r.y, r.width, r.height); }
+            });
+            return;
+        }
+        this._pendingFitRect = null;
         const rect = tiledImage.imageToViewportRectangle(
             Number(x), Number(y), Number(width), Number(height));
-        // immediately=true: the animated spring does not advance in this
-        // embedding, so an animated fit would never move the viewport.
-        this.openSeaDragon.viewport.fitBoundsWithConstraints(rect, true);
+        // Smooth spring animation into the rect (animated, like _applyZone).
+        this.openSeaDragon.viewport.fitBoundsWithConstraints(rect);
     }
 
     // ---------------------------------------------------------------
