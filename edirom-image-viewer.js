@@ -355,6 +355,11 @@ class EdiromOpenseadragon extends HTMLElement {
       
             // handle tileSources property change
             case 'tilesources':
+                // Other images: the page of the previous ones no longer applies (see _resolveInitialPage).
+                if (this._lastTileSources != null && this._lastTileSources !== newPropertyValue) {
+                    this.pagenumber = '1';
+                }
+                this._lastTileSources = newPropertyValue;
                 this.displayOpenSeadragon();
                 // Announce the new page total ONLY when the tile sources actually
                 // change (not on the viewer recreations triggered by sequencemode
@@ -630,8 +635,14 @@ class EdiromOpenseadragon extends HTMLElement {
                 ? tileSources.map(ts => this._resolveTileSource(ts))
                 : this._resolveTileSource(tileSources);
 
+            // A page or zone requested before the viewer existed (attributes set right after `tilesources`, or
+            // the viewer being rebuilt) is honoured here, because goToPage()/_navigateToRegion() cannot act
+            // without an OpenSeadragon instance.
+            const initialPage = this._resolveInitialPage();
+
             this.openSeaDragon = OpenSeadragon({
                 element: this.viewerDiv,
+                initialPage,
                 prefixUrl: new URL('vendor/openseadragon/images/', _COMPONENT_BASE).href,
                 preserveViewport: this.preserveviewport === 'true',
                 minZoomLevel: parseFloat(this.minzoomlevel) || 0.5,
@@ -680,9 +691,18 @@ class EdiromOpenseadragon extends HTMLElement {
                 }));
             });
 
+            // The viewer opens on `initialPage` without a 'page' event; announce it unless OSD does.
+            if (initialPage > 0) {
+                let pageEventSeen = false;
+                this.openSeaDragon.addOnceHandler('page', () => { pageEventSeen = true; });
+                this.openSeaDragon.addOnceHandler('open', () => {
+                    if (!pageEventSeen) this._firePageChanged(initialPage + 1);
+                });
+            }
+
             // Dispatch an 'image-ready' event once the first tile of the
-            // current tile source has been drawn.
-            this.openSeaDragon.addOnceHandler('tile-drawn', () => {
+            // current tile source is available.
+            this._onceTileReady(() => {
                 this.dispatchEvent(new CustomEvent('image-ready', { bubbles: true }));
                 // Render any overlays/layers that were pushed before the
                 // viewer/tiles were ready (placement needs a loaded TiledImage).
@@ -695,12 +715,14 @@ class EdiromOpenseadragon extends HTMLElement {
             // If a zone was requested for this page, apply it once the new page
             // is shown.
             this.openSeaDragon.addHandler('page', (event) => {
+                // Keep the requested page in step with native navigation, so a rebuilt viewer opens here.
+                this.pagenumber = String(event.page + 1);
                 this._firePageChanged(event.page + 1);
 
                 // Re-render the visible overlays for the new page once its tiles
                 // settle. Overlay positions depend on the current TiledImage, so
-                // defer until it is available; 'tile-drawn' also fires for cached
-                // pages, and the timeout is a fallback after OSD's home reset.
+                // defer until it is available; the tile-ready signal also fires for
+                // cached pages, and the timeout is a fallback after OSD's home reset.
                 let rendered = false;
                 const renderOverlays = () => {
                     if (rendered) return;
@@ -708,7 +730,7 @@ class EdiromOpenseadragon extends HTMLElement {
                     this._renderOverlays();
                     this._renderLayers();
                 };
-                this.openSeaDragon.addOnceHandler('tile-drawn', renderOverlays);
+                this._onceTileReady(renderOverlays);
                 setTimeout(renderOverlays, 250);
 
                 if (!this._pendingZoneAfterPageChange) return;
@@ -724,7 +746,7 @@ class EdiromOpenseadragon extends HTMLElement {
                         pending.eventName || 'zone-changed',
                         pending.zoneKey, pending.zone);
                 };
-                this.openSeaDragon.addOnceHandler('tile-drawn', applyPending);
+                this._onceTileReady(applyPending);
                 setTimeout(applyPending, 250);
             });
 
@@ -741,6 +763,41 @@ class EdiromOpenseadragon extends HTMLElement {
         } catch (error) {
             console.error('Error initializing OpenSeadragon:', error);
         }
+    }
+
+    /**
+     * Calls `callback` once, as soon as a tile of the current image is available: the first
+     * 'tiled-image-drawn' with tiles or 'tile-loaded', whichever comes first. OpenSeadragon's
+     * 'tile-drawn' is not used: the WebGL drawer never raises it (and rejects handlers for it), so
+     * anything waiting on it would never run.
+     * @param {Function} callback
+     */
+    _onceTileReady(callback) {
+        const viewer = this.openSeaDragon;
+        if (!viewer) return;
+        let done = false;
+        const finish = (event) => {
+            if (done) return;
+            if (event && event.tiles && event.tiles.length === 0) return;
+            done = true;
+            viewer.removeHandler('tiled-image-drawn', finish);
+            viewer.removeHandler('tile-loaded', finish);
+            callback();
+        };
+        viewer.addHandler('tiled-image-drawn', finish);
+        viewer.addHandler('tile-loaded', finish);
+    }
+
+    /**
+     * The 0-based page the viewer should open on: the page of the active zone if there is one,
+     * otherwise the requested `pagenumber`. Falls back to the first page when neither is valid.
+     * @returns {number}
+     */
+    _resolveInitialPage() {
+        const zone = this._currentZoneKey && this._zonesData[this._currentZoneKey];
+        const requested = parseInt(zone ? zone.page : this.pagenumber);
+        if (isNaN(requested) || requested < 1 || requested > this.totalTileSources) return 0;
+        return requested - 1;
     }
 
     /**
