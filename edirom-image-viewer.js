@@ -36,8 +36,12 @@
  *   Each zone: { type: string, page?: number, ulx?: number, uly?: number,
  *   lrx?: number, lry?: number, containerClass?: string, innerClass?: string,
  *   label?: string, group?: string, title?: string, tooltip?: string,
- *   fn?: string, dataId?: string, filters?: string }. `filters` is a
+ *   fn?: string, dataId?: string, filters?: string,
+ *   symbol?: { text: string, fontFamily?: string, viewBox: string,
+ *   unitsPerEm?: number, width?: number, height?: number } }. `filters` is a
  *   space-separated list of opaque filter tokens used by `hidden-filters`.
+ *   `symbol` is a font glyph the host passes for the component to draw, centred
+ *   in the badge by `viewBox` (the glyph's ink box in font units).
  *   The `type` is an opaque string the host assigns (e.g. "measure", "mdiv",
  *   "annotation"). A single map drives BOTH navigation and overlay rendering,
  *   so the component is independent of any source format (MEI, TEI, …).
@@ -1319,6 +1323,12 @@ class EdiromOpenseadragon extends HTMLElement {
             if (zone.dataId != null) inner.setAttribute('data-edirom-annot-id', zone.dataId);
             // Host-supplied markup (e.g. a specific icon element/font) — the component has no opinion on icons.
             if (zone.iconHtml) inner.insertAdjacentHTML('beforeend', zone.iconHtml);
+            const symbolSvg = me._createSymbolSvg(zone.symbol);
+            if (symbolSvg) {
+                inner.classList.add('edirom-symbol');
+                inner.style.position = 'relative';
+                inner.appendChild(symbolSvg);
+            }
             container.appendChild(inner);
 
             // Track the inner element so the generic filter can toggle it.
@@ -1365,6 +1375,46 @@ class EdiromOpenseadragon extends HTMLElement {
 
         // honour the current category/priority filter for the freshly built overlays
         this._applyOverlayVisibility();
+    }
+
+    /**
+     * Draws a host-supplied glyph symbol as an inline SVG. The viewBox is the
+     * glyph's ink box in font design units (origin at the glyph origin, y down),
+     * and `xMidYMid meet` centres it in the width/height box, so the visible shape
+     * is centred by geometry (no CSS offsets, no measuring). The glyph stays hidden
+     * until its font has loaded so a fallback font never shows in the wrong place.
+     * @param {{text: string, fontFamily?: string, viewBox: string, unitsPerEm?: number, width?: number, height?: number}} symbol
+     * @returns {SVGSVGElement|null} null when the symbol is missing or malformed.
+     * @private
+     */
+    _createSymbolSvg(symbol) {
+        if (!symbol || typeof symbol.text !== 'string' || !symbol.text) return null;
+        if (typeof symbol.viewBox !== 'string' || !symbol.viewBox) return null;
+
+        const ns = 'http://www.w3.org/2000/svg';
+        const svg = document.createElementNS(ns, 'svg');
+        svg.setAttribute('viewBox', symbol.viewBox);
+        svg.setAttribute('preserveAspectRatio', 'xMidYMid meet');
+        svg.setAttribute('aria-hidden', 'true');
+        if (symbol.width > 0) svg.setAttribute('width', symbol.width);
+        if (symbol.height > 0) svg.setAttribute('height', symbol.height);
+        svg.style.cssText = 'position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);' +
+            'display:block;pointer-events:none;';
+
+        const glyph = document.createElementNS(ns, 'text');
+        glyph.setAttribute('x', '0');
+        glyph.setAttribute('y', '0');
+        glyph.setAttribute('font-size', symbol.unitsPerEm > 0 ? symbol.unitsPerEm : 1000);
+        if (symbol.fontFamily) glyph.setAttribute('font-family', symbol.fontFamily);
+        glyph.textContent = symbol.text;
+        svg.appendChild(glyph);
+
+        if (symbol.fontFamily && document.fonts && document.fonts.load) {
+            svg.style.visibility = 'hidden';
+            const show = function () { svg.style.visibility = ''; };
+            document.fonts.load('16px ' + symbol.fontFamily, symbol.text).then(show, show);
+        }
+        return svg;
     }
 
 

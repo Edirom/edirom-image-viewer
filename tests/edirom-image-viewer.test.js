@@ -224,6 +224,53 @@ test('zones-data falls back to an empty map for malformed JSON', () => {
     assert.deepEqual(viewer._zonesData, {});
 });
 
+test('_createSymbolSvg draws a centred inline SVG from a glyph symbol', () => {
+    const viewer = createViewer();
+    const fakeElement = (tag) => ({
+        tag,
+        attrs: {},
+        children: [],
+        style: {},
+        setAttribute(name, value) { this.attrs[name] = String(value); },
+        appendChild(child) { this.children.push(child); }
+    });
+    document.createElementNS = (ns, tag) => fakeElement(tag);
+
+    try {
+        const svg = viewer._createSymbolSvg({
+            text: '\uE4BA',
+            fontFamily: 'Bravura',
+            viewBox: '1 -144 366 143',
+            width: 14.64,
+            height: 5.72
+        });
+
+        assert.equal(svg.tag, 'svg');
+        assert.equal(svg.attrs.viewBox, '1 -144 366 143');
+        assert.equal(svg.attrs.preserveAspectRatio, 'xMidYMid meet');
+        assert.equal(svg.attrs.width, '14.64');
+        assert.equal(svg.attrs.height, '5.72');
+        const glyph = svg.children[0];
+        assert.equal(glyph.tag, 'text');
+        assert.equal(glyph.textContent, '\uE4BA');
+        assert.equal(glyph.attrs['font-family'], 'Bravura');
+        assert.equal(glyph.attrs['font-size'], '1000');
+        assert.equal(glyph.attrs.x, '0');
+        assert.equal(glyph.attrs.y, '0');
+    } finally {
+        delete document.createElementNS;
+    }
+});
+
+test('_createSymbolSvg returns null for missing or malformed symbols', () => {
+    const viewer = createViewer();
+
+    assert.equal(viewer._createSymbolSvg(undefined), null);
+    assert.equal(viewer._createSymbolSvg({ viewBox: '0 0 1 1' }), null);
+    assert.equal(viewer._createSymbolSvg({ text: '', viewBox: '0 0 1 1' }), null);
+    assert.equal(viewer._createSymbolSvg({ text: '\uE4BA' }), null);
+});
+
 test('visible-types parses valid values and resets malformed values', () => {
     const viewer = createViewer();
 
